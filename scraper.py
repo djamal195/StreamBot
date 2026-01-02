@@ -3,8 +3,14 @@ import time
 import re
 import unicodedata
 import urllib.parse
-import json
 import os
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+# Mettre True pour le serveur (Render)
+# Mettre False pour tester sur ton PC et voir le navigateur
+HEADLESS_MODE = True 
 
 def normalize_title(title):
     """Normalise le titre pour comparaison stricte"""
@@ -17,45 +23,45 @@ def normalize_title(title):
 def login_user(page, username, password):
     """Connexion au site"""
     print("🔐 Ouverture du formulaire de connexion...")
-    
     login_trigger = page.locator("#loginButtonContainer").first
     if login_trigger.is_visible():
-        page.evaluate("document.querySelector('#loginButtonContainer').click()")
-        time.sleep(2)
-        
-        page.fill("#login_name", username)
-        time.sleep(0.5)
-        page.fill("#login_password", password)
-        time.sleep(0.5)
-        page.keyboard.press("Enter")
-        time.sleep(5)
-        
-        page.wait_for_load_state("domcontentloaded")
-        time.sleep(2)
-        
-        if page.evaluate("() => !document.querySelector('#loginButtonContainer') || document.body.innerText.includes('Déconnexion')"):
-            print("✅ Connexion réussie !")
+        try:
+            page.evaluate("document.querySelector('#loginButtonContainer').click()")
+            time.sleep(2)
+            page.fill("#login_name", username)
+            time.sleep(0.5)
+            page.fill("#login_password", password)
+            time.sleep(0.5)
+            page.keyboard.press("Enter")
+            time.sleep(5)
+            # Attente chargement
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=10000)
+            except: pass
             return True
-    
-    print("❌ Erreur lors de la connexion")
-    return False
+        except: return False
+    print("ℹ️ Déjà connecté ou bouton absent")
+    return True
 
 def search_film(page, search_query, base_url):
     """Cherche un film via l'URL et comparaison stricte du titre"""
     print(f"🔍 Recherche de : {search_query}...")
-    
     encoded_title = urllib.parse.quote(search_query)
     search_url = f"{base_url}index.php?do=search&subaction=search&story={encoded_title}"
-    page.goto(search_url, wait_until="domcontentloaded")
+    
+    try:
+        page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+    except:
+        print("❌ Timeout recherche")
+        return None
+        
     time.sleep(2)
     
     found_url = page.evaluate("""
         (searchQuery) => {
             const container = document.getElementById('dle-content');
             if (!container) return null;
-            
             const filmBlocks = Array.from(container.querySelectorAll('div.short.film'));
-            console.log('[v0] Films trouvés:', filmBlocks.length);
             
             for (const block of filmBlocks) {
                 let titleEl = block.querySelector('a.short-poster-title');
@@ -65,21 +71,17 @@ def search_film(page, search_query, base_url):
                 if (!titleEl) continue;
                 
                 const titleText = titleEl.innerText.trim();
-                console.log('[v0] Comparaison:', titleText, 'vs', searchQuery);
                 
                 const normalize = (str) => {
                     return str.toLowerCase()
                         .normalize('NFD')
-                        .replace(/[\u0300-\u036f]/g, '')
+                        .replace(/[\\u0300-\\u036f]/g, '')
                         .replace(/[^\\w\\s]/g, ' ')
                         .replace(/\\s+/g, ' ')
                         .trim();
                 };
                 
-                const normalizedTitle = normalize(titleText);
-                const normalizedQuery = normalize(searchQuery);
-                
-                if (normalizedTitle === normalizedQuery) {
+                if (normalize(titleText) === normalize(searchQuery)) {
                     const linkEl = block.querySelector('a.short-poster-title');
                     if (linkEl && linkEl.href) return linkEl.href;
                     
@@ -93,224 +95,104 @@ def search_film(page, search_query, base_url):
     """, search_query)
     
     if found_url:
-        print(f"✨ Film trouvé ! Navigation vers : {found_url}")
+        print(f"✨ Film trouvé : {found_url}")
         return found_url
-    else:
-        print("❌ Aucun film ne correspond exactement.")
-        return None
+    print("❌ Aucun film ne correspond exactement.")
+    return None
 
 def recuperer_lien_vidzy(page, titre_film):
     """Récupère le lien vidzy ou fsvid et le retourne"""
     try:
         page.wait_for_load_state("domcontentloaded", timeout=20000)
         time.sleep(3)
-        
         current_url = page.url
         print(f"🌐 URL actuelle : {current_url}")
         
         lien = None
-        serveur = None
         
+        # 1. VIDZY
         if "vidzy" in current_url.lower():
-            serveur = "vidzy"
-            print(f"🎯 Serveur détecté via URL : {serveur}")
-            
+            print(f"🎯 Serveur détecté : Vidzy")
             try:
                 page.wait_for_selector(".container.file-details a.main-button", timeout=20000)
                 lien = page.evaluate("""
                     () => {
                         const a = document.querySelector(".container.file-details a.main-button");
-                        console.log('[v0] Bouton vidzy trouvé:', !!a);
                         return a ? a.href : null;
                     }
                 """)
-            except Exception as e:
-                print(f"⚠️ Élément vidzy non trouvé : {e}")
+            except: pass
         
-        elif "fsvid" in current_url.lower():
-            serveur = "fsvid"
-            print(f"🎯 Serveur détecté via URL : {serveur}")
-            
+        # 2. FSVID / AUTRES
+        else:
+            print(f"🎯 Serveur détecté : Fsvid/Autre")
             try:
                 page.wait_for_selector("#customDownloadSpan", timeout=20000)
                 lien = page.evaluate("""
                     () => {
                         const span = document.querySelector('#customDownloadSpan');
-                        console.log('[v0] Span fsvid trouvé:', !!span);
-                        
                         if (!span) return null;
-                        
-                        // MÉTHODE 1 : Chercher le <a> directement dans le span
-                        const aTag = span.querySelector('a');
-                        if (aTag && aTag.href) {
-                            console.log('[v0] Lien trouvé via <a> href:', aTag.href);
-                            return aTag.href;
-                        }
-                        
-                        // MÉTHODE 2 : Chercher dans l'attribut onclick du span (fallback)
+                        const a = span.querySelector('a');
+                        if (a && a.href) return a.href;
                         const onclick = span.getAttribute('onclick');
-                        console.log('[v0] onclick attribute:', onclick);
-                        
                         if (onclick) {
                             const match = onclick.match(/'(https?:\/\/[^']+)'/);
-                            if (match) {
-                                console.log('[v0] Lien extrait via onclick:', match[1]);
-                                return match[1];
-                            }
+                            if (match) return match[1];
                         }
-                        
                         return null;
                     }
                 """)
-            except Exception as e:
-                print(f"⚠️ Élément fsvid non trouvé : {e}")
-                print("🔄 Tentative de méthode alternative pour fsvid...")
-                lien = page.evaluate("""
-                    () => {
-                        // Chercher tous les <a> qui contiennent fsvid dans le href
-                        const links = Array.from(document.querySelectorAll('a[href*="fsvid"]'));
-                        console.log('[v0] Liens fsvid trouvés:', links.length);
-                        
-                        for (const link of links) {
-                            if (link.href && link.href.includes('/v/')) {
-                                console.log('[v0] Lien trouvé via recherche générale:', link.href);
-                                return link.href;
-                            }
-                        }
-                        
-                        return null;
-                    }
-                """)
+            except: pass
         
+        if lien:
+            print(f"✅ Lien récupéré : {lien}")
+            return lien # On retourne le lien au lieu de le sauvegarder
         else:
-            print("🔍 Détection via éléments DOM...")
-            is_vidzy = page.evaluate("() => !!document.querySelector('a.main-button')")
-            is_fsvid = page.evaluate("() => !!document.querySelector('#customDownloadSpan')")
-            
-            if is_vidzy:
-                serveur = "vidzy"
-                print(f"🎯 Serveur détecté via DOM : {serveur}")
-                page.wait_for_selector(".container.file-details a.main-button", timeout=20000)
-                lien = page.evaluate("""
-                    () => {
-                        const a = document.querySelector(".container.file-details a.main-button");
-                        return a ? a.href : null;
-                    }
-                """)
-            
-            elif is_fsvid:
-                serveur = "fsvid"
-                print(f"🎯 Serveur détecté via DOM : {serveur}")
-                page.wait_for_selector("#customDownloadSpan", timeout=20000)
-                lien = page.evaluate("""
-                    () => {
-                        const span = document.querySelector('#customDownloadSpan');
-                        if (!span) return null;
-                        
-                        const onclick = span.getAttribute('onclick');
-                        if (!onclick) return null;
-                        
-                        const match = onclick.match(/'(https?:\/\/[^']+)'/);
-                        return match ? match[1] : null;
-                    }
-                """)
-            else:
-                print("❌ Serveur non reconnu (ni vidzy ni fsvid)")
-                print("🔍 Contenu de la page pour diagnostic :")
-                page_info = page.evaluate("""
-                    () => {
-                        return {
-                            title: document.title,
-                            hasMainButton: !!document.querySelector('a.main-button'),
-                            hasCustomDownloadSpan: !!document.querySelector('#customDownloadSpan'),
-                            bodySnippet: document.body.innerText.substring(0, 200)
-                        };
-                    }
-                """)
-                print(f"   Titre: {page_info['title']}")
-                print(f"   Bouton principal: {page_info['hasMainButton']}")
-                print(f"   Span download: {page_info['hasCustomDownloadSpan']}")
-                print(f"   Extrait: {page_info['bodySnippet'][:100]}...")
-                return None  # Retourne None au lieu de return simple
-        
-        if not lien:
-            print(f"❌ Lien {serveur} non trouvé")
-            return None  # Retourne None au lieu de return simple
-        
-        print(f"✅ Lien {serveur} récupéré :")
-        print(lien)
-        
-        db_file = "filmdb.json"
-        data = []
-        
-        if os.path.exists(db_file):
-            try:
-                with open(db_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except json.JSONDecodeError:
-                print("⚠️ filmdb.json vide ou corrompu")
-        
-        data.append({
-            "title": titre_film,
-            "quality": "moyenne",
-            "serveur": serveur,
-            "download_url": lien
-        })
-        
-        with open(db_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        
-        print(f"💾 Lien sauvegardé dans filmdb.json ({len(data)} entrée(s))")
-        
-        return lien
+            print("❌ Lien introuvable sur la page finale")
+            return None
     
     except Exception as e:
         print(f"❌ Erreur récupération : {e}")
-        return None  # Retourne None en cas d'erreur
+        return None
 
 def run_scraper(titre_film):
-    """
-    Fonction principale pour scraper un film
-    Args:
-        titre_film (str): Le titre du film à rechercher
-    Returns:
-        str: L'URL de téléchargement du film, ou None si échec
-    """
+    """Fonction principale appelée par app.py"""
     base_url = "https://french-stream.one/"
     
     with sync_playwright() as p:
         print("🚀 Démarrage du navigateur...")
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        # Configuration robuste pour Docker/Render
+        browser = p.chromium.launch(
+            headless=HEADLESS_MODE,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
+        )
+        context = browser.new_context(viewport={"width": 1280, "height": 800})
+        page = context.new_page()
         
         try:
             print(f"🌐 Navigation vers {base_url}...")
-            page.goto(base_url, timeout=30000)
+            page.goto(base_url, timeout=60000)
             page.wait_for_load_state("domcontentloaded")
             time.sleep(2)
             
             if not login_user(page, "Jekle19", "otf192009"):
-                browser.close()
-                return None
+                browser.close(); return None
             
             film_url = search_film(page, titre_film, base_url)
-            
             if not film_url:
-                print("🛑 Film non trouvé. Fermeture.")
-                browser.close()
-                return None
+                browser.close(); return None
             
             page.goto(film_url, timeout=30000)
             page.wait_for_load_state("domcontentloaded")
             time.sleep(3)
             
             print("🖱️ Clic sur le bouton de téléchargement...")
-            page.wait_for_selector("#downloadBtn", timeout=10000)
-            
+            if not page.locator("#downloadBtn").is_visible():
+                print("❌ Bouton introuvable"); browser.close(); return None
+
             popup_detected = False
             popup_page = None
             
-            # Créer un listener pour le popup (ne bloque pas)
             def on_popup(popup):
                 nonlocal popup_detected, popup_page
                 popup_detected = True
@@ -318,115 +200,66 @@ def run_scraper(titre_film):
             
             page.context.on("page", on_popup)
             
-            # Cliquer sur le bouton
+            # Clic
             page.evaluate("document.getElementById('downloadBtn').click()")
-            print("✅ Bouton cliqué, attente de la réaction...")
-            
-            # Attendre 3 secondes pour voir si un popup s'ouvre
-            time.sleep(3)
-            
-            # Retirer le listener
+            print("✅ Bouton cliqué...")
+            time.sleep(4)
             page.context.remove_listener("page", on_popup)
             
-            lien_final = None  # Variable pour stocker le lien à retourner
+            lien_final = None
             
-            # Scénario A : Popup s'est ouvert directement
+            # SCENARIO A
             if popup_detected and popup_page:
-                print("🚀 SCÉNARIO A : Redirection directe vers serveur (nouvel onglet)")
+                print("🚀 SCÉNARIO A : Popup direct")
                 lien_final = recuperer_lien_vidzy(popup_page, titre_film)
             
-            # Scénario B : Le menu downloadOptions apparaît
+            # SCENARIO B
             else:
-                print("🔄 SCÉNARIO B : Menu de qualité détecté")
-                
+                print("🔄 SCÉNARIO B : Menu Options")
                 try:
-                    # Attendre que le menu apparaisse
-                    page.wait_for_selector("#downloadOptions", state="visible", timeout=5000)
-                    print("✅ Menu des options visible")
-                    time.sleep(1)
-                    
-                    # Vérifier si le menu contient des options
-                    has_options = page.evaluate("""
-                        () => {
-                            const menu = document.getElementById('downloadOptions');
-                            return menu && menu.innerText.trim().length > 0;
-                        }
+                    # Force visible si caché
+                    page.evaluate("""
+                        const menu = document.getElementById('downloadOptions');
+                        if(menu) { menu.style.display = 'block'; menu.style.visibility = 'visible'; }
                     """)
                     
-                    if not has_options:
-                        print("⚠️ Menu vide, impossible de continuer")
-                        browser.close()
-                        return None
-                    
-                    # Chercher et cliquer sur la qualité (haute en priorité, sinon moyenne)
-                    print("🎯 Sélection de la qualité...")
-                    
+                    try:
+                        page.wait_for_selector("#downloadOptions", state="visible", timeout=5000)
+                    except: pass # On continue même si timeout visuel
+
+                    print("🎯 Sélection qualité...")
                     quality_clicked = page.evaluate("""
                         () => {
-                            // PRIORITÉ 1 : Cherche onclick="downloadFile('haute')"
                             let btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
                                 .find(el => el.getAttribute('onclick').includes("'haute'"));
-                            
-                            if (btn) {
-                                console.log('[v0] ✅ Qualité HAUTE trouvée et sélectionnée');
-                                btn.click();
-                                return 'haute';
-                            }
-                            
-                            // PRIORITÉ 2 : Sinon cherche onclick="downloadFile('moyenne')"
-                            btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
+                            if (!btn) btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
                                 .find(el => el.getAttribute('onclick').includes("'moyenne'"));
-                            
-                            if (btn) {
-                                console.log('[v0] ⚠️ Qualité MOYENNE sélectionnée (haute non disponible)');
-                                btn.click();
-                                return 'moyenne';
-                            }
-                            
-                            return null;
+                            if (btn) { btn.click(); return true; }
+                            return false;
                         }
                     """)
                     
-                    if not quality_clicked:
-                        print("❌ Aucune qualité trouvée (ni haute ni moyenne)")
-                        browser.close()
-                        return None
-                    
-                    print(f"✅ Qualité '{quality_clicked}' sélectionnée, attente du popup...")
-                    
-                    # Maintenant attendre le popup après le clic sur la qualité
-                    try:
-                        with page.expect_popup(timeout=10000) as popup_info:
+                    if quality_clicked:
+                        print("✅ Qualité cliquée, attente popup...")
+                        with page.expect_popup(timeout=15000) as popup_info:
                             pass
-                        
-                        popup_page = popup_info.value
-                        print("🚀 Popup ouvert, récupération du lien...")
-                        lien_final = recuperer_lien_vidzy(popup_page, titre_film)
-                    
-                    except Exception as e:
-                        print(f"❌ Popup non détecté après sélection de qualité : {e}")
+                        lien_final = recuperer_lien_vidzy(popup_info.value, titre_film)
+                    else:
+                        print("❌ Pas d'option de qualité trouvée")
                 
                 except Exception as e:
-                    print(f"❌ Erreur dans le scénario B : {e}")
+                    print(f"❌ Erreur Scénario B : {e}")
             
             browser.close()
-            return lien_final  # Retourne le lien récupéré
+            return lien_final # Le lien est envoyé à app.py !
         
         except Exception as e:
             print(f"❌ Erreur générale : {e}")
             browser.close()
             return None
 
-def main():
-    """Fonction pour tester le scraper manuellement"""
-    titre = input("🎬 Entrez le titre du film à rechercher : ").strip()
-    lien = run_scraper(titre)
-    
-    if lien:
-        print(f"\n✅ SUCCÈS ! Lien récupéré :")
-        print(lien)
-    else:
-        print("\n❌ ÉCHEC : Aucun lien récupéré")
-
+# Pour tester en local seulement
 if __name__ == "__main__":
-    main()
+    HEADLESS_MODE = False # Pour voir le test
+    t = input("Film : ")
+    print("Résultat :", run_scraper(t))
