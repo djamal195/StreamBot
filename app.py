@@ -1,11 +1,21 @@
 from flask import Flask, render_template, request, jsonify
 import json
 import os
+import requests
+import threading
 from scraper import run_scraper
 from tmdb_api import get_movie_info
 
 app = Flask(__name__)
 DB_FILE = "database.json"
+
+# ==========================================
+# CONFIGURATION FACEBOOK
+# ==========================================
+# Le token que tu as copié sur Facebook Developers
+PAGE_ACCESS_TOKEN = "METS_TON_TOKEN_PAGE_ICI_ENTRE_GUILLEMETS"
+# Un mot de passe que tu inventes pour la sécurité (ex: otf_secret_123)
+VERIFY_TOKEN = "otf_secret_password"
 
 def load_db():
     if not os.path.exists(DB_FILE): return {}
@@ -20,44 +30,132 @@ def save_db(data):
 
 @app.route('/')
 def home():
-    return "<h1>🤖 OTF STREAM BOT - ONLINE</h1>"
+    return "<h1>🤖 BOT MESSENGER ACTIF</h1>"
 
-# API 1 : Recherche
-@app.route('/api/search', methods=['GET'])
-def search():
-    query = request.args.get('q')
-    info = get_movie_info(query)
-    if info: return jsonify({"status": "found", "data": info})
-    return jsonify({"status": "not_found"})
+# ==========================================
+# 1. LE WEBHOOK (L'OREILLE DU BOT)
+# ==========================================
+@app.route('/webhook', methods=['GET', 'POST'])
+def webhook():
+    # A. Vérification Facebook (C'est Facebook qui teste si tu es là)
+    if request.method == 'GET':
+        if request.args.get("hub.verify_token") == VERIFY_TOKEN:
+            return request.args.get("hub.challenge")
+        return "Erreur de vérification", 403
 
-# API 2 : Génération
-@app.route('/api/generate', methods=['POST'])
-def generate():
-    data = request.json
-    title = data['title']
-    slug = f"{title.replace(' ', '-').lower()}-{data['year']}"
+    # B. Réception des messages
+    if request.method == 'POST':
+        data = request.json
+        if data.get("object") == "page":
+            for entry in data["entry"]:
+                for event in entry["messaging"]:
+                    sender_id = event["sender"]["id"]
+                    
+                    if "message" in event and "text" in event["message"]:
+                        user_text = event["message"]["text"]
+                        # On lance la recherche en thread séparé pour répondre vite
+                        threading.Thread(target=handle_message, args=(sender_id, user_text)).start()
+            
+            return "EVENT_RECEIVED", 200
+    return "OK", 200
+
+# ==========================================
+# 2. LOGIQUE DU BOT (CERVEAU)
+# ==========================================
+def send_fb_message(recipient_id, text):
+    """Envoie un texte simple"""
+    params = {"access_token": PAGE_ACCESS_TOKEN}
+    headers = {"Content-Type": "application/json"}
+    data = json.dumps({
+        "recipient": {"id": recipient_id},
+        "message": {"text": text}
+    })
+    requests.post("https://graph.facebook.com/v12.0/me/messages", params=params, headers=headers, data=data)
+
+def send_fb_card(recipient_id, movie_data):
+    """Envoie une jolie carte avec bouton"""
+    params = {"access_token": PAGE_ACCESS_TOKEN}
+    headers = {"Content-Type": "application/json"}
     
-    db = load_db()
-    if slug in db:
-        return jsonify({"url": f"{request.host_url}watch/{slug}", "cached": True})
-
-    # Scraping
-    link = run_scraper(title)
+    # URL de la page de téléchargement (On construit le slug ici)
+    slug = f"{movie_data['title'].replace(' ', '-').lower()}-{movie_data['year']}-{movie_data['id']}"
+    # L'URL doit pointer vers ton serveur Render
+    # ATTENTION : Remplace par ton VRAI lien Render
+    website_url = f"https://ton-app-render.onrender.com/watch/{slug}"
     
-    if link:
-        db[slug] = {"info": data, "link": link}
-        save_db(db)
-        return jsonify({"url": f"{request.host_url}watch/{slug}", "status": "success"})
+    data = json.dumps({
+        "recipient": {"id": recipient_id},
+        "message": {
+            "attachment": {
+                "type": "template",
+                "payload": {
+                    "template_type": "generic",
+                    "elements": [{
+                        "title": f"{movie_data['title']} ({movie_data['year']})",
+                        "image_url": movie_data['poster'],
+                        "subtitle": "Clique ci-dessous pour télécharger 👇",
+                        "buttons": [
+                            {
+                                "type": "web_url",
+                                "url": website_url,
+                                "title": "📥 TÉLÉCHARGER"
+                            },
+                            {
+                                "type": "postback",
+                                "title": f"Générer: {slug}", # Hack pour passer les infos
+                                "payload": "GENERATE"
+                            }
+                        ]
+                    }]
+                }
+            }
+        }
+    })
+    requests.post("https://graph.facebook.com/v12.0/me/messages", params=params, headers=headers, data=data)
+
+def handle_message(sender_id, text):
+    """Traite le message de l'utilisateur"""
+    print(f"Message reçu de {sender_id}: {text}")
+    
+    # 1. Recherche sur TMDB
+    send_fb_message(sender_id, f"🔎 Je cherche '{text}' sur les serveurs...")
+    movie_info = get_movie_info(text)
+    
+    if movie_info:
+        # 2. On lance le scraping en arrière-plan (PRE-LOADING)
+        # On ne fait pas attendre l'utilisateur, on commence à chercher le lien tout de suite
+        # Mais on lui envoie déjà la carte pour qu'il clique
+        
+        # On sauvegarde les infos de base
+        slug = f"{movie_info['title'].replace(' ', '-').lower()}-{movie_info['year']}-{movie_info['id']}"
+        db = load_db()
+        
+        if slug not in db:
+            # Si pas en base, on lance le scraper
+            send_fb_message(sender_id, "⏳ Film trouvé ! Je pirate le lien, patiente 20 secondes...")
+            link = run_scraper(movie_info['title'])
+            
+            if link:
+                db[slug] = {"info": movie_info, "link": link}
+                save_db(db)
+                send_fb_card(sender_id, movie_info)
+            else:
+                send_fb_message(sender_id, "❌ Désolé, ce film est introuvable sur les serveurs French-Stream.")
+        else:
+            # Déjà en cache
+            send_fb_card(sender_id, movie_info)
+            
     else:
-        return jsonify({"status": "error"})
+        send_fb_message(sender_id, "❌ Film introuvable. Essaie de bien écrire le titre.")
 
-# API 3 : Page de téléchargement
+# ... (GARDE LA PARTIE @app.route('/watch') COMME AVANT) ...
+# ... (Copie-colle la fonction watch et le main du code précédent ici) ...
 @app.route('/watch/<slug>')
 def watch(slug):
     db = load_db()
     if slug in db:
         return render_template('movie.html', movie=db[slug])
-    return "Film introuvable", 404
+    return "<h1>Lien en cours de génération ou introuvable... Rafraichissez dans 10s.</h1>", 404
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
