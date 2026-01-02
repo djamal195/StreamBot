@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Télécharger {{ movie.info.title }}</title>
+    <style>
+        body { background: #121212; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; }
+        .backdrop { width: 100%; height: 250px; object-fit: cover; mask-image: linear-gradient(to bottom, black, transparent); opacity: 0.6; }
+        .container { text-align: center; margin-top: -80px; width: 90%; max-width: 500px; z-index: 2; }
+        .poster { width: 160px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+        h1 { margin: 15px 0 5px; color: #e50914; }
+        p { color: #aaa; font-size: 0.9em; line-height: 1.4; }
+        .btn { display: inline-block; background: #e50914; color: white; padding: 15px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; margin-top: 20px; font-size: 1.1em; transition: 0.3s; }
+        .btn:hover { background: #b20710; transform: scale(1.05); }
+    </style>
+</head>
+<body>
+    <img src="{{ movie.info.backdrop }}" class="backdrop">
+    <div class="container">
+        <img src="{{ movie.info.poster }}" class="poster">
+        <h1>{{ movie.info.title }}</h1>
+        <span>{{ movie.info.year }}</span>
+        <p>{{ movie.info.overview }}</p>
+        <a href="{{ movie.link }}" class="btn">⬇️ TÉLÉCHARGER LE FILM</a>
+    </div>
+</body>
+</html>
