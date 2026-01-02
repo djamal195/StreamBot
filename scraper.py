@@ -103,8 +103,20 @@ def search_film(page, search_query, base_url):
 def recuperer_lien_vidzy(page, titre_film):
     """Récupère le lien vidzy ou fsvid et le retourne"""
     try:
+        print("⏳ Attente de la redirection vers vidzy/fsvid...")
+        max_wait = 15
+        wait_count = 0
+        while wait_count < max_wait:
+            current_url = page.url.lower()
+            if "vidzy" in current_url or "fsvid" in current_url or "fsvidcdn" in current_url:
+                print(f"✅ Redirection détectée vers : {page.url}")
+                break
+            time.sleep(1)
+            wait_count += 1
+        
         page.wait_for_load_state("domcontentloaded", timeout=20000)
         time.sleep(3)
+        
         current_url = page.url
         print(f"🌐 URL actuelle : {current_url}")
         
@@ -121,7 +133,8 @@ def recuperer_lien_vidzy(page, titre_film):
                         return a ? a.href : null;
                     }
                 """)
-            except: pass
+            except Exception as e:
+                print(f"⚠️ Erreur sélecteur Vidzy : {e}")
         
         # 2. FSVID / AUTRES
         else:
@@ -142,11 +155,12 @@ def recuperer_lien_vidzy(page, titre_film):
                         return null;
                     }
                 """)
-            except: pass
+            except Exception as e:
+                print(f"⚠️ Erreur sélecteur Fsvid : {e}")
         
         if lien:
             print(f"✅ Lien récupéré : {lien}")
-            return lien # On retourne le lien au lieu de le sauvegarder
+            return lien
         else:
             print("❌ Lien introuvable sur la page finale")
             return None
@@ -197,61 +211,93 @@ def run_scraper(titre_film):
                 nonlocal popup_detected, popup_page
                 popup_detected = True
                 popup_page = popup
+                print("🚀 Popup détecté !")
             
             page.context.on("page", on_popup)
             
             # Clic
             page.evaluate("document.getElementById('downloadBtn').click()")
             print("✅ Bouton cliqué...")
-            time.sleep(4)
+            
+            time.sleep(5)
             page.context.remove_listener("page", on_popup)
             
             lien_final = None
             
-            # SCENARIO A
+            # SCENARIO A : Popup direct vers vidzy/fsvid
             if popup_detected and popup_page:
-                print("🚀 SCÉNARIO A : Popup direct")
+                print("🚀 SCÉNARIO A : Popup direct détecté")
                 lien_final = recuperer_lien_vidzy(popup_page, titre_film)
             
-            # SCENARIO B
+            # SCENARIO B : Menu Options
             else:
                 print("🔄 SCÉNARIO B : Menu Options")
                 try:
                     # Force visible si caché
                     page.evaluate("""
                         const menu = document.getElementById('downloadOptions');
-                        if(menu) { menu.style.display = 'block'; menu.style.visibility = 'visible'; }
+                        if(menu) { 
+                            menu.style.display = 'block'; 
+                            menu.style.visibility = 'visible'; 
+                            menu.style.opacity = '1';
+                        }
                     """)
+                    
+                    time.sleep(2)
                     
                     try:
                         page.wait_for_selector("#downloadOptions", state="visible", timeout=5000)
-                    except: pass # On continue même si timeout visuel
+                        print("✅ Menu downloadOptions visible")
+                    except:
+                        print("⚠️ Menu non visible mais on continue...")
 
-                    print("🎯 Sélection qualité...")
+                    print("🎯 Sélection qualité (priorité : haute > moyenne)...")
+                    
                     quality_clicked = page.evaluate("""
                         () => {
+                            // Chercher 'haute' en priorité
                             let btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
                                 .find(el => el.getAttribute('onclick').includes("'haute'"));
-                            if (!btn) btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
+                            
+                            if (btn) {
+                                console.log("Qualité HAUTE trouvée !");
+                                btn.click();
+                                return 'haute';
+                            }
+                            
+                            // Sinon chercher 'moyenne'
+                            btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
                                 .find(el => el.getAttribute('onclick').includes("'moyenne'"));
-                            if (btn) { btn.click(); return true; }
-                            return false;
+                            
+                            if (btn) {
+                                console.log("Qualité MOYENNE trouvée !");
+                                btn.click();
+                                return 'moyenne';
+                            }
+                            
+                            return null;
                         }
                     """)
                     
                     if quality_clicked:
-                        print("✅ Qualité cliquée, attente popup...")
-                        with page.expect_popup(timeout=15000) as popup_info:
-                            pass
-                        lien_final = recuperer_lien_vidzy(popup_info.value, titre_film)
+                        print(f"✅ Qualité '{quality_clicked}' cliquée, attente popup...")
+                        
+                        try:
+                            with page.expect_popup(timeout=15000) as popup_info:
+                                pass
+                            quality_popup = popup_info.value
+                            print("✅ Popup de qualité ouvert")
+                            lien_final = recuperer_lien_vidzy(quality_popup, titre_film)
+                        except Exception as e:
+                            print(f"❌ Erreur attente popup : {e}")
                     else:
-                        print("❌ Pas d'option de qualité trouvée")
+                        print("❌ Pas d'option de qualité trouvée (ni haute ni moyenne)")
                 
                 except Exception as e:
                     print(f"❌ Erreur Scénario B : {e}")
             
             browser.close()
-            return lien_final # Le lien est envoyé à app.py !
+            return lien_final
         
         except Exception as e:
             print(f"❌ Erreur générale : {e}")
