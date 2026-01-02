@@ -5,15 +5,11 @@ import unicodedata
 import urllib.parse
 import os
 
-# ==========================================
 # CONFIGURATION
-# ==========================================
 # Mettre True pour le serveur (Render)
-# Mettre False pour tester sur ton PC et voir le navigateur
 HEADLESS_MODE = True 
 
 def normalize_title(title):
-    """Normalise le titre pour comparaison stricte"""
     nfd = unicodedata.normalize('NFD', title)
     title_no_accents = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
     normalized = re.sub(r'[^\w\s]', ' ', title_no_accents)
@@ -21,7 +17,6 @@ def normalize_title(title):
     return normalized
 
 def login_user(page, username, password):
-    """Connexion au site"""
     print("🔐 Ouverture du formulaire de connexion...")
     login_trigger = page.locator("#loginButtonContainer").first
     if login_trigger.is_visible():
@@ -34,7 +29,6 @@ def login_user(page, username, password):
             time.sleep(0.5)
             page.keyboard.press("Enter")
             time.sleep(5)
-            # Attente chargement
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=10000)
             except: pass
@@ -44,18 +38,16 @@ def login_user(page, username, password):
     return True
 
 def search_film(page, search_query, base_url):
-    """Cherche un film via l'URL et comparaison stricte du titre"""
     print(f"🔍 Recherche de : {search_query}...")
     encoded_title = urllib.parse.quote(search_query)
     search_url = f"{base_url}index.php?do=search&subaction=search&story={encoded_title}"
     
     try:
         page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+        time.sleep(2)
     except:
         print("❌ Timeout recherche")
         return None
-        
-    time.sleep(2)
     
     found_url = page.evaluate("""
         (searchQuery) => {
@@ -64,30 +56,16 @@ def search_film(page, search_query, base_url):
             const filmBlocks = Array.from(container.querySelectorAll('div.short.film'));
             
             for (const block of filmBlocks) {
-                let titleEl = block.querySelector('a.short-poster-title');
-                if (!titleEl) titleEl = block.querySelector('div.short-title');
-                if (!titleEl) titleEl = block.querySelector('.short-title a');
-                
+                let titleEl = block.querySelector('a.short-poster-title') || block.querySelector('div.short-title') || block.querySelector('.short-title a');
                 if (!titleEl) continue;
                 
                 const titleText = titleEl.innerText.trim();
                 
-                const normalize = (str) => {
-                    return str.toLowerCase()
-                        .normalize('NFD')
-                        .replace(/[\\u0300-\\u036f]/g, '')
-                        .replace(/[^\\w\\s]/g, ' ')
-                        .replace(/\\s+/g, ' ')
-                        .trim();
-                };
+                const normalize = (str) => str.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^\\w\\s]/g, ' ').replace(/\\s+/g, ' ').trim();
                 
                 if (normalize(titleText) === normalize(searchQuery)) {
-                    const linkEl = block.querySelector('a.short-poster-title');
-                    if (linkEl && linkEl.href) return linkEl.href;
-                    
-                    const allLinks = Array.from(block.querySelectorAll('a'));
-                    const movieLink = allLinks.find(l => l.href && (l.href.includes('/films/') || l.href.includes('/series/')));
-                    if (movieLink) return movieLink.href;
+                    const linkEl = block.querySelector('a.short-poster-title') || block.querySelector('a');
+                    return linkEl ? linkEl.href : null;
                 }
             }
             return null;
@@ -101,12 +79,12 @@ def search_film(page, search_query, base_url):
     return None
 
 def recuperer_lien_vidzy(page, titre_film):
-    """Récupère le lien vidzy ou fsvid et le retourne"""
+    """Extrait le lien final depuis la page de l'hébergeur (Popup)"""
     try:
         page.wait_for_load_state("domcontentloaded", timeout=20000)
         time.sleep(3)
         current_url = page.url
-        print(f"🌐 URL actuelle : {current_url}")
+        print(f"🌐 URL Popup : {current_url}")
         
         lien = None
         
@@ -114,26 +92,25 @@ def recuperer_lien_vidzy(page, titre_film):
         if "vidzy" in current_url.lower():
             print(f"🎯 Serveur détecté : Vidzy")
             try:
-                page.wait_for_selector(".container.file-details a.main-button", timeout=20000)
-                lien = page.evaluate("""
-                    () => {
-                        const a = document.querySelector(".container.file-details a.main-button");
-                        return a ? a.href : null;
-                    }
-                """)
+                page.wait_for_selector(".container.file-details a.main-button", timeout=10000)
+                lien = page.evaluate("document.querySelector('.container.file-details a.main-button')?.href")
             except: pass
         
         # 2. FSVID / AUTRES
         else:
             print(f"🎯 Serveur détecté : Fsvid/Autre")
             try:
-                page.wait_for_selector("#customDownloadSpan", timeout=20000)
+                page.wait_for_selector("#customDownloadSpan", timeout=15000)
                 lien = page.evaluate("""
                     () => {
                         const span = document.querySelector('#customDownloadSpan');
                         if (!span) return null;
+                        
+                        // Priorité 1: Balise A
                         const a = span.querySelector('a');
                         if (a && a.href) return a.href;
+                        
+                        // Priorité 2: Onclick
                         const onclick = span.getAttribute('onclick');
                         if (onclick) {
                             const match = onclick.match(/'(https?:\/\/[^']+)'/);
@@ -146,7 +123,7 @@ def recuperer_lien_vidzy(page, titre_film):
         
         if lien:
             print(f"✅ Lien récupéré : {lien}")
-            return lien # On retourne le lien au lieu de le sauvegarder
+            return lien
         else:
             print("❌ Lien introuvable sur la page finale")
             return None
@@ -156,12 +133,10 @@ def recuperer_lien_vidzy(page, titre_film):
         return None
 
 def run_scraper(titre_film):
-    """Fonction principale appelée par app.py"""
     base_url = "https://french-stream.one/"
     
     with sync_playwright() as p:
         print("🚀 Démarrage du navigateur...")
-        # Configuration robuste pour Docker/Render
         browser = p.chromium.launch(
             headless=HEADLESS_MODE,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
@@ -190,76 +165,95 @@ def run_scraper(titre_film):
             if not page.locator("#downloadBtn").is_visible():
                 print("❌ Bouton introuvable"); browser.close(); return None
 
-            popup_detected = False
-            popup_page = None
+            # --- GESTION INTELLIGENTE DU CLIC ---
             
-            def on_popup(popup):
-                nonlocal popup_detected, popup_page
-                popup_detected = True
-                popup_page = popup
+            # 1. On prépare le panier pour attraper un éventuel popup (Scénario A)
+            popup_bucket = []
+            page.context.on("page", lambda p: popup_bucket.append(p))
             
-            page.context.on("page", on_popup)
-            
-            # Clic
+            # 2. On clique
             page.evaluate("document.getElementById('downloadBtn').click()")
-            print("✅ Bouton cliqué...")
+            print("✅ Bouton cliqué, analyse de la réaction...")
+            
+            # 3. On attend un peu pour voir ce qui se passe
             time.sleep(4)
-            page.context.remove_listener("page", on_popup)
+            
+            # On arrête d'écouter les nouvelles pages pour éviter le bruit
+            page.context.remove_listener("page", lambda p: popup_bucket.append(p))
             
             lien_final = None
             
-            # SCENARIO A
-            if popup_detected and popup_page:
-                print("🚀 SCÉNARIO A : Popup direct")
+            # --- ANALYSE DES SCÉNARIOS ---
+            
+            # SCÉNARIO A : Un popup s'est ouvert tout seul ?
+            if len(popup_bucket) > 0:
+                print("🚀 SCÉNARIO A DÉTECTÉ : Redirection directe.")
+                # Le dernier popup ouvert est probablement le bon
+                popup_page = popup_bucket[-1]
                 lien_final = recuperer_lien_vidzy(popup_page, titre_film)
             
-            # SCENARIO B
+            # SCÉNARIO B : Pas de popup ? Alors c'est le menu Options.
             else:
-                print("🔄 SCÉNARIO B : Menu Options")
+                print("🔄 SCÉNARIO B DÉTECTÉ : Menu Options.")
                 try:
-                    # Force visible si caché
-                    page.evaluate("""
-                        const menu = document.getElementById('downloadOptions');
-                        if(menu) { menu.style.display = 'block'; menu.style.visibility = 'visible'; }
-                    """)
-                    
+                    # On s'assure que le menu est visible
                     try:
                         page.wait_for_selector("#downloadOptions", state="visible", timeout=5000)
-                    except: pass # On continue même si timeout visuel
+                    except:
+                        # Si invisible, on force l'affichage (Hack CSS)
+                        print("⚠️ Menu caché, forçage CSS...")
+                        page.evaluate("document.getElementById('downloadOptions').style.display = 'block';")
+                        time.sleep(1)
 
-                    print("🎯 Sélection qualité...")
+                    print("🎯 Sélection qualité (Haute > Moyenne)...")
+                    
+                    # Logique de priorité Javascript
                     quality_clicked = page.evaluate("""
                         () => {
-                            let btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
-                                .find(el => el.getAttribute('onclick').includes("'haute'"));
-                            if (!btn) btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
-                                .find(el => el.getAttribute('onclick').includes("'moyenne'"));
-                            if (btn) { btn.click(); return true; }
+                            let container = document.getElementById('downloadOptions');
+                            if (!container) return false;
+                            
+                            // On cherche tous les éléments cliquables
+                            let btns = Array.from(container.querySelectorAll('[onclick*="downloadFile"]'));
+                            
+                            // 1. Chercher HAUTE
+                            let target = btns.find(el => el.getAttribute('onclick').toLowerCase().includes('haute'));
+                            
+                            // 2. Chercher MOYENNE (si pas haute)
+                            if (!target) {
+                                target = btns.find(el => el.getAttribute('onclick').toLowerCase().includes('moyenne'));
+                            }
+                            
+                            // 3. Fallback (le premier dispo)
+                            if (!target && btns.length > 0) target = btns[0];
+
+                            if (target) { target.click(); return true; }
                             return false;
                         }
                     """)
                     
                     if quality_clicked:
-                        print("✅ Qualité cliquée, attente popup...")
-                        with page.expect_popup(timeout=15000) as popup_info:
+                        print("✅ Qualité cliquée, attente du popup final...")
+                        # Là, on doit obligatoirement avoir un popup
+                        with page.expect_popup(timeout=20000) as popup_info:
                             pass
                         lien_final = recuperer_lien_vidzy(popup_info.value, titre_film)
                     else:
-                        print("❌ Pas d'option de qualité trouvée")
+                        print("❌ Aucune option cliquable trouvée dans le menu.")
                 
                 except Exception as e:
                     print(f"❌ Erreur Scénario B : {e}")
             
             browser.close()
-            return lien_final # Le lien est envoyé à app.py !
-        
+            return lien_final
+
         except Exception as e:
-            print(f"❌ Erreur générale : {e}")
+            print(f"❌ Erreur Générale Scraper : {e}")
             browser.close()
             return None
 
-# Pour tester en local seulement
+# Pour tester en local
 if __name__ == "__main__":
-    HEADLESS_MODE = False # Pour voir le test
+    HEADLESS_MODE = False
     t = input("Film : ")
     print("Résultat :", run_scraper(t))
