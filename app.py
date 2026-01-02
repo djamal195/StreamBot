@@ -7,15 +7,15 @@ from scraper import run_scraper
 from tmdb_api import get_movie_info
 
 app = Flask(__name__)
-DB_FILE = "database.json"
+DB_FILE = "filmdb.json"
 
 # ==========================================
 # CONFIGURATION FACEBOOK
 # ==========================================
 # Le token que tu as copié sur Facebook Developers
-PAGE_ACCESS_TOKEN = "METS_TON_TOKEN_PAGE_ICI_ENTRE_GUILLEMETS"
+PAGE_ACCESS_TOKEN = "EAA1kj7YrrxIBQcvXq3M8YJZAiNAtsAU6oX1LdatiJ1QQiZBxIA6FQBaE2vIfs6lxTdoj809jOTotZBZAZBVGlFZCjEmuVbcOe2awlt7u0ZCiGF9XfkiWrU6oAwURaF7JjUs47LMaepzp5C4TnbB7aF15zD0FESFAZAbkgbmPFKuHMdv1Wp342sCdMwJEmO3QUZBp8jlRXyE9AogZDZD"
 # Un mot de passe que tu inventes pour la sécurité (ex: otf_secret_123)
-VERIFY_TOKEN = "otf_secret_password"
+VERIFY_TOKEN = "otf200919"
 
 def load_db():
     if not os.path.exists(DB_FILE): return {}
@@ -160,3 +160,4 @@ def watch(slug):
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
