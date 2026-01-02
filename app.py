@@ -81,7 +81,7 @@ def send_fb_card(recipient_id, movie_data):
     slug = f"{movie_data['title'].replace(' ', '-').lower()}-{movie_data['year']}-{movie_data['id']}"
     # L'URL doit pointer vers ton serveur Render
     # ATTENTION : Remplace par ton VRAI lien Render
-    website_url = f"https://ton-app-render.onrender.com/watch/{slug}"
+    website_url = f"https://streambot-tv9s.onrender.com/watch/{slug}"
     
     data = json.dumps({
         "recipient": {"id": recipient_id},
@@ -160,4 +160,5 @@ def watch(slug):
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
 
