@@ -12,6 +12,7 @@ import os
 # Mettre False pour tester sur ton PC et voir le navigateur
 HEADLESS_MODE = True 
 
+
 def normalize_title(title):
     """Normalise le titre pour comparaison stricte"""
     nfd = unicodedata.normalize('NFD', title)
@@ -103,20 +104,8 @@ def search_film(page, search_query, base_url):
 def recuperer_lien_vidzy(page, titre_film):
     """Récupère le lien vidzy ou fsvid et le retourne"""
     try:
-        print("⏳ Attente de la redirection vers vidzy/fsvid...")
-        max_wait = 15
-        wait_count = 0
-        while wait_count < max_wait:
-            current_url = page.url.lower()
-            if "vidzy" in current_url or "fsvid" in current_url or "fsvidcdn" in current_url:
-                print(f"✅ Redirection détectée vers : {page.url}")
-                break
-            time.sleep(1)
-            wait_count += 1
-        
         page.wait_for_load_state("domcontentloaded", timeout=20000)
         time.sleep(3)
-        
         current_url = page.url
         print(f"🌐 URL actuelle : {current_url}")
         
@@ -133,8 +122,7 @@ def recuperer_lien_vidzy(page, titre_film):
                         return a ? a.href : null;
                     }
                 """)
-            except Exception as e:
-                print(f"⚠️ Erreur sélecteur Vidzy : {e}")
+            except: pass
         
         # 2. FSVID / AUTRES
         else:
@@ -155,8 +143,7 @@ def recuperer_lien_vidzy(page, titre_film):
                         return null;
                     }
                 """)
-            except Exception as e:
-                print(f"⚠️ Erreur sélecteur Fsvid : {e}")
+            except: pass
         
         if lien:
             print(f"✅ Lien récupéré : {lien}")
@@ -211,29 +198,57 @@ def run_scraper(titre_film):
                 nonlocal popup_detected, popup_page
                 popup_detected = True
                 popup_page = popup
-                print("🚀 Popup détecté !")
+                print("🎉 Popup détecté!")
             
             page.context.on("page", on_popup)
             
-            # Clic
+            # Clic sur le bouton
             page.evaluate("document.getElementById('downloadBtn').click()")
-            print("✅ Bouton cliqué...")
+            print("✅ Bouton cliqué, analyse du comportement...")
             
-            time.sleep(5)
+            # Attendre et vérifier ce qui se passe (popup ou menu)
+            max_wait = 8  # Attendre jusqu'à 8 secondes
+            waited = 0
+            menu_appeared = False
+            
+            while waited < max_wait:
+                time.sleep(1)
+                waited += 1
+                
+                # Vérifier si popup détecté
+                if popup_detected:
+                    print(f"🚀 Popup détecté après {waited}s")
+                    break
+                
+                # Vérifier si le menu downloadOptions est apparu
+                menu_visible = page.evaluate("""
+                    () => {
+                        const menu = document.getElementById('downloadOptions');
+                        if (!menu) return false;
+                        const style = window.getComputedStyle(menu);
+                        return style.display !== 'none' && style.visibility !== 'hidden';
+                    }
+                """)
+                
+                if menu_visible:
+                    menu_appeared = True
+                    print(f"📋 Menu options détecté après {waited}s")
+                    break
+            
             page.context.remove_listener("page", on_popup)
             
             lien_final = None
             
-            # SCENARIO A : Popup direct vers vidzy/fsvid
+            # SCENARIO A : Un popup s'est ouvert
             if popup_detected and popup_page:
-                print("🚀 SCÉNARIO A : Popup direct détecté")
+                print("🚀 SCÉNARIO A : Popup direct")
                 lien_final = recuperer_lien_vidzy(popup_page, titre_film)
             
-            # SCENARIO B : Menu Options
-            else:
-                print("🔄 SCÉNARIO B : Menu Options")
+            # SCENARIO B : Le menu est apparu
+            elif menu_appeared:
+                print("🔄 SCÉNARIO B : Menu Options détecté")
                 try:
-                    # Force visible si caché
+                    # Forcer l'affichage du menu au cas où
                     page.evaluate("""
                         const menu = document.getElementById('downloadOptions');
                         if(menu) { 
@@ -242,59 +257,94 @@ def run_scraper(titre_film):
                             menu.style.opacity = '1';
                         }
                     """)
+                    time.sleep(1)
                     
-                    time.sleep(2)
+                    print("🎯 Sélection qualité...")
                     
-                    try:
-                        page.wait_for_selector("#downloadOptions", state="visible", timeout=5000)
-                        print("✅ Menu downloadOptions visible")
-                    except:
-                        print("⚠️ Menu non visible mais on continue...")
-
-                    print("🎯 Sélection qualité (priorité : haute > moyenne)...")
-                    
-                    quality_clicked = page.evaluate("""
+                    quality_info = page.evaluate("""
                         () => {
-                            // Chercher 'haute' en priorité
-                            let btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
-                                .find(el => el.getAttribute('onclick').includes("'haute'"));
+                            console.log('[v0] Recherche des boutons de qualité...');
                             
-                            if (btn) {
-                                console.log("Qualité HAUTE trouvée !");
-                                btn.click();
-                                return 'haute';
+                            const selectors = [
+                                '[onclick*="downloadFile"]',
+                                'button[onclick*="downloadFile"]',
+                                'a[onclick*="downloadFile"]',
+                                '.download-option',
+                                '#downloadOptions button',
+                                '#downloadOptions a'
+                            ];
+                            
+                            let allButtons = [];
+                            for (const selector of selectors) {
+                                const found = Array.from(document.querySelectorAll(selector));
+                                allButtons = allButtons.concat(found);
                             }
                             
-                            // Sinon chercher 'moyenne'
-                            btn = Array.from(document.querySelectorAll('[onclick*="downloadFile"]'))
-                                .find(el => el.getAttribute('onclick').includes("'moyenne'"));
+                            allButtons = [...new Set(allButtons)];
                             
-                            if (btn) {
-                                console.log("Qualité MOYENNE trouvée !");
-                                btn.click();
-                                return 'moyenne';
+                            console.log('[v0] Boutons trouvés:', allButtons.length);
+                            
+                            if (allButtons.length === 0) {
+                                return { found: false, message: 'Aucun bouton trouvé' };
                             }
                             
-                            return null;
+                            // Priorité 1: haute qualité
+                            let btn = allButtons.find(el => {
+                                const onclick = el.getAttribute('onclick') || '';
+                                const text = el.innerText || '';
+                                return onclick.includes("'haute'") || text.toLowerCase().includes('haute');
+                            });
+                            
+                            if (btn) {
+                                console.log('[v0] Bouton HAUTE trouvé');
+                                btn.click();
+                                return { found: true, quality: 'haute' };
+                            }
+                            
+                            // Priorité 2: moyenne qualité
+                            btn = allButtons.find(el => {
+                                const onclick = el.getAttribute('onclick') || '';
+                                const text = el.innerText || '';
+                                return onclick.includes("'moyenne'") || text.toLowerCase().includes('moyenne');
+                            });
+                            
+                            if (btn) {
+                                console.log('[v0] Bouton MOYENNE trouvé');
+                                btn.click();
+                                return { found: true, quality: 'moyenne' };
+                            }
+                            
+                            // Dernier recours: premier bouton disponible
+                            if (allButtons.length > 0) {
+                                console.log('[v0] Clic sur le premier bouton disponible');
+                                allButtons[0].click();
+                                return { found: true, quality: 'premier disponible' };
+                            }
+                            
+                            return { found: false, message: 'Aucun bouton valide' };
                         }
                     """)
                     
-                    if quality_clicked:
-                        print(f"✅ Qualité '{quality_clicked}' cliquée, attente popup...")
+                    if quality_info and quality_info.get('found'):
+                        print(f"✅ Qualité '{quality_info.get('quality')}' sélectionnée, attente popup...")
+                        time.sleep(2)
                         
                         try:
                             with page.expect_popup(timeout=15000) as popup_info:
                                 pass
-                            quality_popup = popup_info.value
-                            print("✅ Popup de qualité ouvert")
-                            lien_final = recuperer_lien_vidzy(quality_popup, titre_film)
-                        except Exception as e:
-                            print(f"❌ Erreur attente popup : {e}")
+                            lien_final = recuperer_lien_vidzy(popup_info.value, titre_film)
+                        except:
+                            print("⚠️ Aucun popup détecté après clic qualité")
                     else:
-                        print("❌ Pas d'option de qualité trouvée (ni haute ni moyenne)")
+                        message = quality_info.get('message', 'Erreur inconnue') if quality_info else 'Pas de réponse'
+                        print(f"❌ {message}")
                 
                 except Exception as e:
                     print(f"❌ Erreur Scénario B : {e}")
+            
+            # Aucun scénario détecté
+            else:
+                print("⚠️ Aucun scénario détecté (ni popup ni menu)")
             
             browser.close()
             return lien_final
