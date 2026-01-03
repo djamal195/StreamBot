@@ -1,7 +1,7 @@
 import requests
 
 # ⚠️ REMET TA CLÉ ICI
-API_KEY = "TA_CLE_API_TMDB_ICI"
+API_KEY = "84d02f22771ce209a34cfbc49dfe99de"
 BASE_URL = "https://api.themoviedb.org/3"
 
 def get_movie_info(query):
@@ -44,3 +44,4 @@ def get_movie_info(query):
     except Exception as e:
         print(f"Erreur TMDB: {e}")
     return None
+
