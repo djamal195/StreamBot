@@ -9,6 +9,14 @@ import os
 # Mettre True pour le serveur (Render)
 HEADLESS_MODE = True 
 
+# Identifiants
+LOGIN_USER = "Jekle19"
+LOGIN_PASS = "otf192009"
+
+def log(msg):
+    """Fonction pour forcer l'affichage des logs sur Render"""
+    print(msg, flush=True)
+
 def normalize_title(title):
     nfd = unicodedata.normalize('NFD', title)
     title_no_accents = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
@@ -16,28 +24,30 @@ def normalize_title(title):
     normalized = re.sub(r'\s+', ' ', normalized).strip().lower()
     return normalized
 
-def login_user(page, username, password):
-    print("🔐 Connexion...")
+def login_user(page):
+    log("🔐 Connexion...")
     login_trigger = page.locator("#loginButtonContainer").first
     if login_trigger.is_visible():
         try:
             page.evaluate("document.querySelector('#loginButtonContainer').click()")
             time.sleep(2)
-            page.fill("#login_name", username)
+            page.fill("#login_name", LOGIN_USER)
             time.sleep(0.5)
-            page.fill("#login_password", password)
+            page.fill("#login_password", LOGIN_PASS)
             time.sleep(0.5)
             page.keyboard.press("Enter")
             time.sleep(5)
             try: page.wait_for_load_state("domcontentloaded", timeout=10000)
             except: pass
             return True
-        except: return False
-    print("ℹ️ Déjà connecté ou bouton absent")
+        except Exception as e:
+            log(f"⚠️ Erreur Login (non critique) : {e}")
+            return False
+    log("ℹ️ Déjà connecté ou bouton absent")
     return True
 
 def search_film(page, search_query, base_url):
-    print(f"🔍 Recherche : {search_query}...")
+    log(f"🔍 Recherche de : {search_query}...")
     encoded_title = urllib.parse.quote(search_query)
     search_url = f"{base_url}index.php?do=search&subaction=search&story={encoded_title}"
     
@@ -46,6 +56,7 @@ def search_film(page, search_query, base_url):
     except: return None
     time.sleep(2)
     
+    # Logique stricte : On cherche le titre exact
     found_url = page.evaluate("""
         (searchQuery) => {
             const container = document.getElementById('dle-content');
@@ -69,19 +80,18 @@ def search_film(page, search_query, base_url):
     """, search_query)
     
     if found_url:
-        print(f"✨ Trouvé : {found_url}")
+        log(f"✨ Trouvé : {found_url}")
         return found_url
-    print("❌ Introuvable.")
+    
+    log("❌ Introuvable dans la recherche.")
     return None
 
 def recuperer_lien_vidzy(page):
     """Extrait le lien du popup"""
     try:
-        # On attend que la page du popup charge
-        page.wait_for_load_state("domcontentloaded", timeout=15000)
+        page.wait_for_load_state("domcontentloaded", timeout=20000)
         time.sleep(2)
         current_url = page.url
-        print(f"   🌐 URL Popup : {current_url}")
         
         # VIDZY
         if "vidzy" in current_url.lower():
@@ -89,7 +99,7 @@ def recuperer_lien_vidzy(page):
         
         # FSVID / AUTRES
         try:
-            page.wait_for_selector("#customDownloadSpan", timeout=8000)
+            page.wait_for_selector("#customDownloadSpan", timeout=10000)
             return page.evaluate("""
                 () => {
                     const span = document.querySelector('#customDownloadSpan');
@@ -109,64 +119,53 @@ def recuperer_lien_vidzy(page):
     except: return None
 
 # ==========================================
-# 🔥 NOUVELLE LOGIQUE SÉRIES 🔥
+# 🔥 LOGIQUE SÉRIES (AMÉLIORÉE) 🔥
 # ==========================================
 def extract_series_links(page, context):
-    print("📺 Mode SÉRIE : Analyse des épisodes...")
+    log("📺 Mode SÉRIE : Analyse des épisodes...")
     links = []
     
     # 1. On attend que la liste des épisodes soit visible
     try:
-        # Sélecteur basé sur ta capture d'écran
         page.wait_for_selector(".ep-download", timeout=10000)
     except:
-        print("❌ Liste épisodes introuvable (pas de .ep-download)")
+        log("❌ Liste épisodes introuvable (Selecteur .ep-download échoué)")
         return []
 
-    # 2. On récupère tous les boutons de téléchargement d'épisodes
-    # L'ordre est important (Episode 1, 2, 3...)
+    # 2. On récupère les handles des boutons
     buttons = page.locator(".ep-download").all()
     count = len(buttons)
-    print(f"📋 {count} épisodes détectés.")
+    log(f"📋 {count} épisodes détectés.")
 
-    # ⚠️ LIMITATION POUR EVITER TIMEOUT SERVEUR
-    # On prend les 10 premiers max pour commencer
     LIMIT_EPISODES = 10 
     
     for i, btn in enumerate(buttons):
         if i >= LIMIT_EPISODES: break
         
         ep_num = i + 1
-        print(f"   ⬇️ Traitement Épisode {ep_num}...")
+        log(f"   ⬇️ Traitement Épisode {ep_num}...")
         
         try:
             # On prépare l'interception du popup
             with context.expect_page(timeout=15000) as popup_info:
-                # Clic JS sur le bouton de l'épisode
-                # On utilise dispatchEvent pour éviter les pubs overlays
+                # Clic JS sur le bouton de l'épisode (plus fiable que .click())
                 btn.evaluate("el => el.click()")
             
-            # On récupère la nouvelle page (Popup)
             popup = popup_info.value
-            
-            # On extrait le lien
             lien = recuperer_lien_vidzy(popup)
-            
-            # On ferme le popup pour ne pas surcharger la mémoire
             popup.close()
             
             if lien:
-                print(f"      ✅ Lien : {lien}")
+                log(f"      ✅ Ep {ep_num} OK")
                 links.append({"episode": ep_num, "lien": lien})
             else:
-                print("      ❌ Lien vide")
+                log(f"      ❌ Ep {ep_num} vide")
                 links.append({"episode": ep_num, "lien": None})
                 
-            # Petite pause pour ne pas se faire bannir
             time.sleep(1)
             
         except Exception as e:
-            print(f"      ⚠️ Erreur clic épisode {ep_num}: {e}")
+            log(f"      ⚠️ Erreur technique Ep {ep_num}: {e}")
             links.append({"episode": ep_num, "lien": None})
 
     return links
@@ -178,20 +177,33 @@ def run_scraper(titre_film, is_serie=False, all_episodes=False):
     base_url = "https://french-stream.one/"
     
     with sync_playwright() as p:
-        print("🚀 Scraper démarré...")
+        log("🚀 Scraper démarré...")
+        
+        # --- CONFIGURATION FURTIVE (IMPORTANT) ---
         browser = p.chromium.launch(
             headless=HEADLESS_MODE,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
+            args=[
+                "--disable-blink-features=AutomationControlled", 
+                "--no-sandbox", 
+                "--disable-dev-shm-usage"
+            ]
         )
-        context = browser.new_context(viewport={"width": 1280, "height": 800})
+        
+        # On définit un User-Agent de vrai PC pour tromper le site
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        
         page = context.new_page()
         
         try:
+            log(f"🌐 Navigation...")
             page.goto(base_url, timeout=60000)
             page.wait_for_load_state("domcontentloaded")
             time.sleep(2)
             
-            login_user(page, "Jekle19", "otf192009")
+            login_user(page)
             
             film_url = search_film(page, titre_film, base_url)
             if not film_url:
@@ -201,20 +213,18 @@ def run_scraper(titre_film, is_serie=False, all_episodes=False):
             page.wait_for_load_state("domcontentloaded")
             time.sleep(2)
             
-            # --- DIVERGENCE FILM / SÉRIE ---
             result = None
             
             if is_serie:
-                # >>> MODE SÉRIE : On boucle sur les épisodes <<<
+                # Mode Série
                 result = extract_series_links(page, context)
             else:
-                # >>> MODE FILM : Clic unique <<<
+                # Mode Film
                 if not page.locator("#downloadBtn").is_visible():
-                    print("❌ Bouton introuvable"); browser.close(); return None
+                    log("❌ Bouton introuvable"); browser.close(); return None
 
-                print("🖱️ Clic Film...")
+                log("🖱️ Clic Film...")
                 
-                # Gestion Popup vs Menu (Ta logique existante)
                 popup_bucket = []
                 page.context.on("page", lambda p: popup_bucket.append(p))
                 
@@ -222,8 +232,10 @@ def run_scraper(titre_film, is_serie=False, all_episodes=False):
                 time.sleep(3)
                 
                 if len(popup_bucket) > 0:
+                    log("   -> Popup direct")
                     result = recuperer_lien_vidzy(popup_bucket[0])
                 else:
+                    log("   -> Menu Options")
                     try:
                         page.wait_for_selector("#downloadOptions", state="visible", timeout=3000)
                         page.evaluate("""
@@ -241,6 +253,6 @@ def run_scraper(titre_film, is_serie=False, all_episodes=False):
             return result
 
         except Exception as e:
-            print(f"❌ Erreur générale : {e}")
+            log(f"❌ Erreur générale : {e}")
             browser.close()
             return None
