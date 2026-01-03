@@ -12,7 +12,7 @@ from tmdb_api import get_movie_info
 app = Flask(__name__)
 DB_FILE = "database.json"
 
-PAGE_ACCESS_TOKEN = "METS_TON_TOKEN_ICI"
+PAGE_ACCESS_TOKEN = "EAA1kj7YrrxIBQU1uaYs9ZCaWzljLrhwaZAyaaAFJdHbryb9uEZA9EuyGixG4oOvJqRTzoNZChKHB2aHZBwWRMZBQxXncPyJnT4AoLsdBn9w9BJ1N7ZBtXVOe60rua7Li3JPF2Ha0OPEyxXZCmnzBuufagdKONIoYmZCwv6tWlY3VZCfRZCPOpy4gNjXu9NRyeylY50OAXU7QYRJEQZDZD"
 VERIFY_TOKEN = "otf_secret_password"
 
 def load_db():
