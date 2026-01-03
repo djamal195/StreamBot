@@ -7,23 +7,18 @@ import os
 import sys
 
 # CONFIGURATION
+# True pour le serveur (Render), False pour test PC
 HEADLESS_MODE = True 
 
-# Fonction de log forcé (pour voir sur Render)
 def log(msg):
     print(f"[SCRAPER_LOG] {msg}", flush=True)
 
-def normalize_title(title):
-    nfd = unicodedata.normalize('NFD', title)
-    title_no_accents = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
-    normalized = re.sub(r'[^\w\s]', ' ', title_no_accents)
-    normalized = re.sub(r'\s+', ' ', normalized).strip().lower()
-    return normalized
-
 def login_user(page, username, password):
-    log("🔐 Tentative de connexion...")
-    if page.locator("#loginButtonContainer").is_visible():
+    log("🔐 Connexion...")
+    login_trigger = page.locator("#loginButtonContainer").first
+    if login_trigger.is_visible():
         try:
+            # Clic JS pour éviter les pubs
             page.evaluate("document.querySelector('#loginButtonContainer').click()")
             time.sleep(2)
             page.fill("#login_name", username)
@@ -43,9 +38,9 @@ def login_user(page, username, password):
     return True
 
 def search_film(page, search_query, target_season, base_url):
-    log(f"🔍 Recherche URL pour : {search_query} (Saison: {target_season})")
+    # Etape 1 : On cherche le TITRE GLOBAL (ex: "Stranger Things")
+    log(f"🔍 Recherche globale : {search_query}")
     
-    # Nettoyage du titre pour l'URL
     encoded_title = urllib.parse.quote(search_query)
     search_url = f"{base_url}index.php?do=search&subaction=search&story={encoded_title}"
     
@@ -57,71 +52,85 @@ def search_film(page, search_query, target_season, base_url):
     
     time.sleep(2)
     
-    # --- LOGIQUE DE SÉLECTION DÉTAILLÉE ---
-    log("🧐 Analyse des résultats de recherche...")
-    
-    # On récupère les infos depuis le navigateur
+    # Etape 2 : On construit le format EXACT attendu par French-Stream
+    # Si c'est une série, on cherche "Titre - Saison X"
+    if target_season:
+        target_format = f"{search_query} - Saison {target_season}"
+        log(f"🎯 CIBLE SÉRIE REQUISE : '{target_format}'")
+    else:
+        log(f"🎯 CIBLE FILM : '{search_query}'")
+
+    # Etape 3 : Analyse JS
     found_href = page.evaluate("""
         ([searchQuery, seasonNum]) => {
             const container = document.getElementById('dle-content');
-            if (!container) return "NO_CONTAINER";
+            if (!container) return { status: "NO_CONTAINER" };
             
             const filmBlocks = Array.from(container.querySelectorAll('div.short.film'));
-            if (filmBlocks.length === 0) return "NO_BLOCKS";
+            if (filmBlocks.length === 0) return { status: "NO_BLOCKS" };
 
-            const normalize = (str) => str.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^\\w\\s]/g, ' ').replace(/\\s+/g, ' ').trim();
-            const targetTitle = normalize(searchQuery);
+            // Fonction de nettoyage (minuscules, sans accents)
+            const normalize = (str) => str.toLowerCase()
+                                          .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+                                          .trim();
             
-            // Logique de recherche
+            const baseTitle = normalize(searchQuery);
+            const allTitlesSeen = [];
+
             for (const block of filmBlocks) {
                 let titleEl = block.querySelector('div.short-title') || block.querySelector('.short-title a');
                 if (!titleEl) continue;
                 
-                let rawTitle = titleEl.innerText;
-                let cleanTitle = normalize(rawTitle);
+                let rawTitle = titleEl.innerText; // Ex: "Stranger Things - Saison 4"
+                let cleanTitle = normalize(rawTitle); // Ex: "stranger things - saison 4"
                 
-                // Pour une SÉRIE, on cherche "Titre" ET "Saison X"
+                allTitlesSeen.push(rawTitle);
+
                 if (seasonNum) {
-                    // On vérifie si le titre correspond
-                    if (cleanTitle.includes(targetTitle)) {
-                        // On vérifie si la saison correspond
-                        // Regex pour trouver "Saison 4", "S4", "Season 4"
-                        const seasonRegex = new RegExp(`(saison|season|s)[^0-9]*0?${seasonNum}(?!\\d)`, 'i');
+                    // --- LOGIQUE SÉRIE STRICTE ---
+                    // On construit le motif exact : "titre - saison X"
+                    // On gère les espaces autour du tiret et le 0 optionnel (saison 04 vs 4)
+                    
+                    // On vérifie d'abord si le titre de la série est présent
+                    if (cleanTitle.includes(baseTitle)) {
                         
-                        if (seasonRegex.test(rawTitle)) {
+                        // Ensuite on cherche " - saison X"
+                        // Regex: tiret, espace(s), "saison", espace(s), chiffre X
+                        const regexSaison = new RegExp(`-\\s*saison\\s*0?${seasonNum}(?!\\d)`, 'i');
+                        
+                        if (regexSaison.test(cleanTitle)) {
                             const linkEl = block.querySelector('.short-poster') || block.querySelector('.short-title a');
-                            if (linkEl && linkEl.href) return linkEl.href;
+                            if (linkEl && linkEl.href && !linkEl.href.includes('xfsearch')) {
+                                return { status: "FOUND", url: linkEl.href, title: rawTitle };
+                            }
                         }
                     }
-                } 
-                // Pour un FILM
-                else {
-                    if (cleanTitle === targetTitle || cleanTitle.includes(targetTitle)) {
-                        const linkEl = block.querySelector('.short-poster') || block.querySelector('.short-title a');
-                        if (linkEl && linkEl.href) return linkEl.href;
+                } else {
+                    // --- LOGIQUE FILM ---
+                    if (cleanTitle === baseTitle || cleanTitle.includes(baseTitle)) {
+                        // On évite de cliquer sur une "Saison" si on cherche un film
+                        if (!cleanTitle.includes("saison")) {
+                            const linkEl = block.querySelector('.short-poster') || block.querySelector('.short-title a');
+                            if (linkEl && linkEl.href && !linkEl.href.includes('xfsearch')) {
+                                return { status: "FOUND", url: linkEl.href, title: rawTitle };
+                            }
+                        }
                     }
                 }
             }
-            return null;
+            return { status: "NOT_FOUND", titles: allTitlesSeen };
         }
     """, [search_query, target_season])
     
-    if found_href == "NO_CONTAINER":
-        log("❌ Erreur : Conteneur #dle-content introuvable.")
+    if found_href['status'] == "FOUND":
+        log(f"✨ Match confirmé : {found_href['title']}")
+        return found_href['url']
+        
+    if found_href['status'] == "NOT_FOUND":
+        log(f"❌ Introuvable. Titres vus : {found_href['titles']}")
         return None
-    if found_href == "NO_BLOCKS":
-        log("❌ Erreur : Aucun bloc film trouvé dans la page.")
-        return None
-    if found_href:
-        log(f"✨ Page Série trouvée : {found_href}")
-        return found_href
     
-    log(f"❌ Aucun titre ne correspond à '{search_query}' Saison '{target_season}'")
-    
-    # DEBUG : Affiche les titres trouvés pour comprendre l'erreur
-    titres_visibles = page.locator(".short-title").all_inner_texts()
-    log(f"   -> Titres vus sur la page : {titres_visibles[:5]}")
-    
+    log(f"❌ Erreur technique : {found_href['status']}")
     return None
 
 def recuperer_lien_vidzy(page):
@@ -153,22 +162,18 @@ def recuperer_lien_vidzy(page):
     except: return None
 
 def extract_series_links(page, context):
-    log("📺 Début extraction des épisodes...")
+    log("📺 Mode SÉRIE : Extraction...")
     links = []
     
-    # 1. Vérification présence liste
     try:
         page.wait_for_selector(".ep-download", timeout=10000)
     except:
-        log("❌ CRITIQUE : Aucun bouton '.ep-download' trouvé sur la page.")
-        # Debug: Prendre une capture si ça échoue ici
-        # page.screenshot(path="debug_no_eps.png")
+        log("❌ Liste épisodes introuvable")
         return []
 
-    # 2. Comptage
     buttons = page.locator(".ep-download").all()
     count = len(buttons)
-    log(f"📋 {count} épisodes détectés.")
+    log(f"📋 {count} épisodes trouvés.")
 
     LIMIT_EPISODES = 10 
     
@@ -188,13 +193,12 @@ def extract_series_links(page, context):
                 log(f"   ✅ Ep {ep_num} OK")
                 links.append({"episode": ep_num, "lien": lien})
             else:
-                log(f"   ⚠️ Ep {ep_num} lien vide")
+                log(f"   ⚠️ Ep {ep_num} vide")
                 links.append({"episode": ep_num, "lien": None})
             
             time.sleep(0.5)
             
         except Exception as e:
-            log(f"   ❌ Erreur Ep {ep_num}: {e}")
             links.append({"episode": ep_num, "lien": None})
 
     return links
@@ -217,15 +221,14 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
             
             login_user(page, "Jekle19", "otf192009")
             
-            # Recherche avec gestion Saison
+            # Recherche avec la nouvelle logique stricte
             film_url = search_film(page, titre_film, season_number, base_url)
             
             if not film_url:
                 log("🛑 Arrêt : Page introuvable.")
                 browser.close(); return None
             
-            # Navigation vers la page Série/Film
-            log(f"🌐 Navigation vers la page : {film_url}")
+            log(f"🌐 Navigation page : {film_url}")
             page.goto(film_url, timeout=60000)
             page.wait_for_load_state("domcontentloaded")
             time.sleep(2)
@@ -233,12 +236,10 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
             result = None
             
             if is_serie:
-                # Extraction des épisodes
                 result = extract_series_links(page, context)
                 if not result:
-                    log("⚠️ La liste des épisodes est vide après extraction.")
+                    log("⚠️ Aucun lien d'épisode récupéré.")
             else:
-                # Mode Film (inchangé)
                 if not page.locator("#downloadBtn").is_visible():
                     log("❌ Bouton introuvable"); browser.close(); return None
 
