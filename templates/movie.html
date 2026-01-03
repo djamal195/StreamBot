@@ -3,265 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ item.info.title }} - Téléchargement</title>
+    <title>Regarder {{ item.info.title }}</title>
     <style>
-        /* --- CONFIGURATION GÉNÉRALE --- */
-        :root {
-            --primary: #e50914; /* Rouge Netflix */
-            --dark: #141414;
-            --light: #f5f5f1;
-            --gray: #aaa;
-        }
+        body { background: #121212; color: #fff; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; }
+        
+        .backdrop { width: 100%; height: 350px; object-fit: cover; mask-image: linear-gradient(to bottom, black, transparent); opacity: 0.4; position: absolute; top: 0; z-index: -1; }
+        
+        .container { text-align: center; margin-top: 180px; width: 95%; max-width: 800px; padding-bottom: 50px; }
+        
+        .poster { width: 160px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.9); border: 2px solid #333; }
+        
+        h1 { margin: 20px 0 5px; color: #e50914; font-size: 2.2rem; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); }
+        .meta { color: #888; font-size: 0.9rem; margin-bottom: 15px; }
+        .year { background: #333; padding: 2px 8px; border-radius: 4px; color: #eee; }
+        
+        p { color: #ccc; font-size: 1rem; line-height: 1.6; margin: 20px auto; background: rgba(20,20,20,0.8); padding: 15px; border-radius: 10px; max-width: 600px; }
 
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--dark);
-            color: var(--light);
-            display: flex;
-            justify-content: center;
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
+        /* --- FILM --- */
+        .btn-movie { display: inline-block; background: #e50914; color: white; padding: 18px 50px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 1.2rem; transition: 0.3s; box-shadow: 0 5px 20px rgba(229, 9, 20, 0.4); margin-top: 20px; }
+        .btn-movie:hover { background: #ff0f1f; transform: scale(1.05); }
 
-        /* --- FOND D'ÉCRAN FLOU --- */
-        .backdrop-container {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 400px;
-            z-index: 0;
-            overflow: hidden;
+        /* --- SÉRIES --- */
+        .lang-section { margin-top: 40px; text-align: left; background: #1a1a1a; padding: 20px; border-radius: 15px; border: 1px solid #333; }
+        
+        .lang-title { 
+            font-size: 1.2rem; color: #e50914; border-bottom: 1px solid #444; 
+            padding-bottom: 10px; margin-bottom: 15px; font-weight: bold; 
+            display: flex; align-items: center; gap: 10px;
         }
-
-        .backdrop {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            filter: blur(8px) brightness(0.4);
-            mask-image: linear-gradient(to bottom, black, transparent);
-            -webkit-mask-image: linear-gradient(to bottom, black, transparent);
+        
+        .episodes-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); 
+            gap: 10px; 
         }
-
-        /* --- CONTENU PRINCIPAL --- */
-        .main-content {
-            z-index: 1;
-            width: 90%;
-            max-width: 800px;
-            margin-top: 60px;
-            text-align: center;
-            padding-bottom: 50px;
-        }
-
-        .poster {
-            width: 200px;
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
-            border: 1px solid rgba(255,255,255,0.1);
-            transition: transform 0.3s ease;
-        }
-
-        .poster:hover {
-            transform: scale(1.05);
-        }
-
-        h1 {
-            font-size: 2.5rem;
-            margin: 20px 0 10px 0;
-            text-shadow: 0 2px 10px rgba(0,0,0,0.8);
-        }
-
-        .meta {
-            color: var(--gray);
-            font-size: 1.1rem;
-            margin-bottom: 20px;
-            display: inline-block;
-            background: rgba(0,0,0,0.6);
-            padding: 5px 15px;
-            border-radius: 20px;
-        }
-
-        .overview {
-            font-size: 1rem;
-            line-height: 1.6;
-            color: #ccc;
-            max-width: 600px;
-            margin: 0 auto 40px auto;
-            text-shadow: 0 1px 2px black;
-        }
-
-        /* --- BOUTONS --- */
-        .btn-download {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            background: var(--primary);
-            color: white;
-            padding: 15px 40px;
-            border-radius: 50px;
-            text-decoration: none;
-            font-weight: bold;
-            font-size: 1.2rem;
-            box-shadow: 0 4px 15px rgba(229, 9, 20, 0.5);
-            transition: all 0.2s;
-            border: none;
-            cursor: pointer;
-        }
-
-        .btn-download:hover {
-            background: #ff0f1f;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(229, 9, 20, 0.7);
-        }
-
-        /* --- GRILLE ÉPISODES (POUR SÉRIES) --- */
-        .series-section {
-            background: rgba(255,255,255,0.05);
-            padding: 20px;
-            border-radius: 15px;
-            margin-top: 20px;
-        }
-
-        .section-title {
-            text-align: left;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            padding-bottom: 10px;
-            margin-bottom: 20px;
-            color: var(--gray);
-            text-transform: uppercase;
+        
+        .btn-ep { 
+            background: #2a2a2a; color: white; padding: 12px 5px; 
+            text-decoration: none; border-radius: 8px; font-weight: bold; 
+            transition: 0.2s; border: 1px solid #444; display: block; text-align: center;
             font-size: 0.9rem;
-            letter-spacing: 1px;
         }
+        .btn-ep:hover { background: #e50914; border-color: #e50914; color: white; }
+        .btn-ep.disabled { opacity: 0.3; cursor: not-allowed; background: #111; pointer-events: none; }
 
-        .episodes-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-            gap: 12px;
-        }
-
-        .episode-btn {
-            background: #2a2a2a;
-            color: white;
-            padding: 12px 5px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.9rem;
-            transition: 0.2s;
-            border: 1px solid #333;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .episode-btn:hover {
-            background: var(--primary);
-            border-color: var(--primary);
-        }
-
-        .episode-number {
-            font-size: 1.1rem;
-        }
-
-        .episode-label {
-            font-size: 0.7rem;
-            opacity: 0.7;
-            text-transform: uppercase;
-        }
-
-        /* Épisode non trouvé (grisé) */
-        .episode-btn.disabled {
-            opacity: 0.3;
-            cursor: not-allowed;
-            background: #111;
-            border-color: transparent;
-        }
-
-        /* --- FOOTER --- */
-        .footer {
-            margin-top: 50px;
-            font-size: 0.8rem;
-            color: #444;
-            border-top: 1px solid #222;
-            padding-top: 20px;
-        }
-
-        /* Mobile Responsive */
-        @media (max-width: 600px) {
-            h1 { font-size: 1.8rem; }
-            .poster { width: 160px; }
-            .episodes-grid { grid-template-columns: repeat(3, 1fr); }
-        }
+        .flag { font-size: 1.2rem; }
     </style>
 </head>
 <body>
 
-    <!-- Fond d'écran flouté -->
-    <div class="backdrop-container">
-        {% if item.info.backdrop %}
-        <img src="{{ item.info.backdrop }}" class="backdrop" alt="Background">
-        {% endif %}
-    </div>
-
-    <div class="main-content">
-        <!-- Affiche et Titre -->
-        {% if item.info.poster %}
-        <img src="{{ item.info.poster }}" class="poster" alt="{{ item.info.title }}">
-        {% endif %}
-
+    <img src="{{ item.info.backdrop }}" class="backdrop">
+    
+    <div class="container">
+        <img src="{{ item.info.poster }}" class="poster">
         <h1>{{ item.info.title }}</h1>
+        <div class="meta"><span class="year">{{ item.info.year }}</span> • {% if item.is_series %}Série TV (Saison {{ item.season }}){% else %}Film{% endif %}</div>
         
-        <div class="meta">
-            {{ item.info.year }} • {% if item.is_series %}Série TV{% else %}Film{% endif %}
-        </div>
+        <p>{{ item.info.overview }}</p>
 
-        <p class="overview">
-            {{ item.info.overview }}
-        </p>
-
-        <!-- ZONE DE TÉLÉCHARGEMENT -->
-        
+        <!-- LOGIQUE D'AFFICHAGE -->
         {% if item.is_series %}
-            <!-- --- AFFICHAGE SÉRIE (GRILLE) --- -->
-            <div class="series-section">
-                <div class="section-title">Saison 1 - Liens Directs</div>
+            
+            <!-- SECTION VF -->
+            {% if item.links.vf and item.links.vf|length > 0 %}
+            <div class="lang-section">
+                <div class="lang-title"><span class="flag">🇫🇷</span> Version Française (VF)</div>
                 <div class="episodes-grid">
-                    {% for ep in item.links %}
+                    {% for ep in item.links.vf %}
                         {% if ep.lien %}
-                            <!-- Lien valide -->
-                            <a href="{{ ep.lien }}" target="_blank" class="episode-btn">
-                                <span class="episode-label">Épisode</span>
-                                <span class="episode-number">{{ ep.episode }}</span>
-                            </a>
+                            <a href="{{ ep.lien }}" target="_blank" class="btn-ep">Ep. {{ ep.episode }}</a>
                         {% else %}
-                            <!-- Lien non trouvé (Case vide) -->
-                            <div class="episode-btn disabled" title="Non disponible">
-                                <span class="episode-label">Épisode</span>
-                                <span class="episode-number">{{ ep.episode }}</span>
-                            </div>
+                            <div class="btn-ep disabled">{{ ep.episode }}</div>
                         {% endif %}
                     {% endfor %}
                 </div>
             </div>
+            {% endif %}
+
+            <!-- SECTION VOSTFR -->
+            {% if item.links.vostfr and item.links.vostfr|length > 0 %}
+            <div class="lang-section">
+                <div class="lang-title"><span class="flag">🇺🇸</span> Version Originale (VOSTFR)</div>
+                <div class="episodes-grid">
+                    {% for ep in item.links.vostfr %}
+                        {% if ep.lien %}
+                            <a href="{{ ep.lien }}" target="_blank" class="btn-ep">Ep. {{ ep.episode }}</a>
+                        {% else %}
+                            <div class="btn-ep disabled">{{ ep.episode }}</div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if not item.links.vf and not item.links.vostfr %}
+                <h3 style="color: #888;">Aucun épisode disponible pour le moment.</h3>
+            {% endif %}
 
         {% else %}
-            <!-- --- AFFICHAGE FILM (BOUTON UNIQUE) --- -->
-            <div style="margin-top: 40px;">
-                <a href="{{ item.links }}" class="btn-download">
-                    ▶️ TÉLÉCHARGER LE FILM
-                </a>
-                <p style="margin-top: 15px; font-size: 0.9rem; color: #666;">
-                    Lien direct (1fichier / Uptobox / Vidzy)
-                </p>
-            </div>
+            <!-- C'EST UN FILM -->
+            <a href="{{ item.links }}" class="btn-movie">⬇️ TÉLÉCHARGER LE FILM</a>
         {% endif %}
-
-        <div class="footer">
-            STREAM-BOT • OTF x DJAMAL19<br>
-            Ceci est un projet éducatif.
-        </div>
+        
+        <br><br>
+        <small style="color:#555;">StreamBot OTF • v2.0</small>
     </div>
 
 </body>
