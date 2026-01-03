@@ -7,7 +7,6 @@ import os
 import sys
 
 # CONFIGURATION
-# True pour le serveur, False pour tester sur PC
 HEADLESS_MODE = True 
 
 def log(msg):
@@ -43,8 +42,14 @@ def login_user(page, username, password):
     return True
 
 def search_film(page, search_query, target_season, base_url):
+    # --- STRATÉGIE DE RECHERCHE ---
     if target_season:
-        queries_to_try = [f"{search_query} Saison {target_season}", search_query]
+        # On essaie le format EXACT du site en premier
+        queries_to_try = [
+            f"{search_query} - Saison {target_season}", # Format officiel (Stranger Things - Saison 4)
+            f"{search_query} Saison {target_season}",   # Format sans tiret
+            search_query                                # Titre seul (Fallback)
+        ]
     else:
         queries_to_try = [search_query]
 
@@ -61,6 +66,7 @@ def search_film(page, search_query, target_season, base_url):
         
         time.sleep(2)
         
+        # --- ANALYSE DES RÉSULTATS ---
         found_href = page.evaluate("""
             ([searchQuery, seasonNum, originalTitle]) => {
                 const container = document.getElementById('dle-content');
@@ -69,9 +75,14 @@ def search_film(page, search_query, target_season, base_url):
                 const filmBlocks = Array.from(container.querySelectorAll('div.short.film'));
                 if (filmBlocks.length === 0) return { status: "NO_BLOCKS" };
 
-                const normalize = (str) => str.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-z0-9\\s]/g, ' ').replace(/\\s+/g, ' ').trim();
+                // Nettoyage agressif : remplace tout ce qui n'est pas lettre/chiffre par un espace
+                // Donc "Stranger Things - Saison 4" devient "stranger things   saison 4"
+                const normalize = (str) => str.toLowerCase()
+                                              .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+                                              .replace(/[^a-z0-9]/g, ' ') 
+                                              .replace(/\\s+/g, ' ')
+                                              .trim();
                 
-                const targetFull = normalize(searchQuery); 
                 const targetBase = normalize(originalTitle);
                 const allTitlesSeen = [];
 
@@ -85,13 +96,22 @@ def search_film(page, search_query, target_season, base_url):
 
                     let isMatch = false;
 
+                    // --- LOGIQUE SÉRIE ---
                     if (seasonNum) {
+                        // 1. On vérifie si le titre de base est présent
                         if (cleanTitle.includes(targetBase)) {
-                            const regexSaison = new RegExp(`(saison|s| )\\s*0?${seasonNum}(?!\\d)`, 'i');
-                            if (regexSaison.test(cleanTitle)) isMatch = true;
+                            
+                            // 2. On vérifie la saison avec une Regex flexible
+                            // Cherche: "saison 4", "s04", "s4" (le tiret a été remplacé par espace via normalize)
+                            const regexSaison = new RegExp(`(saison|s)\\s*0?${seasonNum}(?!\\d)`, 'i');
+                            
+                            if (regexSaison.test(cleanTitle)) {
+                                isMatch = true;
+                            }
                         }
-                        if (cleanTitle.includes(normalize(targetBase + " saison " + seasonNum))) isMatch = true;
-                    } else {
+                    } 
+                    // --- LOGIQUE FILM ---
+                    else {
                         if (cleanTitle === targetBase || cleanTitle.includes(targetBase)) {
                             if (!cleanTitle.includes("saison")) isMatch = true;
                         }
@@ -106,15 +126,20 @@ def search_film(page, search_query, target_season, base_url):
                 }
                 return { status: "NOT_FOUND", titles: allTitlesSeen };
             }
-        """, [query, target_season, search_query])
+        """, [query, target_season, search_query]) 
         
         if found_href['status'] == "FOUND":
             log(f"✨ Match confirmé : {found_href['title']}")
             return found_href['url']
         
-        log(f"⚠️ Pas trouvé avec '{query}'...")
+        # Si pas trouvé, on boucle pour essayer la requête suivante
+        log(f"⚠️ Pas trouvé avec '{query}'.")
 
     log("❌ Introuvable après tous les essais.")
+    # On affiche ce qu'il a vu lors de la dernière tentative pour comprendre
+    if found_href['status'] == "NOT_FOUND":
+        log(f"   Titres vus : {found_href.get('titles', [])[:5]}...")
+        
     return None
 
 def recuperer_lien_vidzy(page):
@@ -145,34 +170,27 @@ def recuperer_lien_vidzy(page):
         return None
     except: return None
 
-# --- NOUVELLE FONCTION D'EXTRACTION PAR ZONE ---
-def extract_episodes_from_container(page, context, container_id, lang_name):
-    """Extrait les épisodes d'un conteneur spécifique (VF ou VOSTFR)"""
-    log(f"📺 Analyse de la zone {lang_name} (#{container_id})...")
+def extract_series_links(page, context):
+    log("📺 Mode SÉRIE : Extraction...")
     links = []
     
-    # Vérifier si le conteneur existe
-    is_present = page.locator(f"#{container_id}").is_visible()
-    if not is_present:
-        log(f"⚠️ Zone {lang_name} introuvable ou vide.")
+    try:
+        page.wait_for_selector(".ep-download", timeout=10000)
+    except:
+        log("❌ Liste épisodes introuvable")
         return []
 
-    # On cible uniquement les boutons DANS ce conteneur
-    # On utilise le sélecteur composé : #ID .ep-download
-    buttons = page.locator(f"#{container_id} .ep-download").all()
+    buttons = page.locator(".ep-download").all()
     count = len(buttons)
-    log(f"📋 {count} épisodes trouvés pour {lang_name}.")
+    log(f"📋 {count} épisodes trouvés.")
 
-    # BOUCLE ILLIMITÉE (Attention aux timeouts Render !)
+    LIMIT_EPISODES = 10 
+    
     for i, btn in enumerate(buttons):
+        if i >= LIMIT_EPISODES: break
         ep_num = i + 1
         
-        # On force un petit scroll pour charger l'élément si besoin
-        try: btn.scroll_into_view_if_needed()
-        except: pass
-
         try:
-            # Préparation popup
             with context.expect_page(timeout=10000) as popup_info:
                 btn.evaluate("el => el.click()")
             
@@ -181,17 +199,15 @@ def extract_episodes_from_container(page, context, container_id, lang_name):
             popup.close()
             
             if lien:
-                log(f"   ✅ {lang_name} Ep {ep_num} OK")
+                log(f"   ✅ Ep {ep_num} OK")
                 links.append({"episode": ep_num, "lien": lien})
             else:
-                log(f"   ⚠️ {lang_name} Ep {ep_num} Vide")
+                log(f"   ⚠️ Ep {ep_num} vide")
                 links.append({"episode": ep_num, "lien": None})
             
-            # Pause minime pour aller vite mais pas trop
             time.sleep(0.5)
             
         except Exception as e:
-            log(f"   ❌ Erreur {lang_name} Ep {ep_num}: {e}")
             links.append({"episode": ep_num, "lien": None})
 
     return links
@@ -216,6 +232,7 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
             
             # Recherche
             film_url = search_film(page, titre_film, season_number, base_url)
+            
             if not film_url:
                 log("🛑 Arrêt : Page introuvable.")
                 browser.close(); return None
@@ -228,28 +245,10 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
             result = None
             
             if is_serie:
-                # --- NOUVELLE LOGIQUE SÉRIES (VF + VOSTFR) ---
-                log("🔄 Démarrage extraction Multi-Langue...")
-                
-                # 1. Extraction VF
-                vf_links = extract_episodes_from_container(page, context, "vf-episodes", "VF")
-                
-                # 2. Extraction VOSTFR
-                vostfr_links = extract_episodes_from_container(page, context, "vostfr-episodes", "VOSTFR")
-                
-                # On retourne un objet structuré
-                result = {
-                    "vf": vf_links,
-                    "vostfr": vostfr_links
-                }
-                
-                # Petit check
-                count_vf = len(vf_links)
-                count_vost = len(vostfr_links)
-                log(f"✅ Terminé : {count_vf} VF et {count_vost} VOSTFR récupérés.")
-
+                result = extract_series_links(page, context)
+                if not result:
+                    log("⚠️ Aucun lien d'épisode récupéré.")
             else:
-                # --- LOGIQUE FILM (Inchangée) ---
                 if not page.locator("#downloadBtn").is_visible():
                     log("❌ Bouton introuvable"); browser.close(); return None
 
