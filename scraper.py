@@ -40,9 +40,6 @@ def login_user(page, username, password):
     return True
 
 def search_film(page, search_query, target_season, base_url):
-    # search_query = "Stranger Things"
-    # target_season = "4" (ou None si Film)
-    
     log(f"🔍 Recherche de : {search_query}...")
     encoded_title = urllib.parse.quote(search_query)
     search_url = f"{base_url}index.php?do=search&subaction=search&story={encoded_title}"
@@ -52,56 +49,57 @@ def search_film(page, search_query, target_season, base_url):
     except: return None
     time.sleep(2)
     
-    # On construit le titre EXACT qu'on veut trouver sur French-Stream
-    # Exemple : "stranger things - saison 4"
-    if target_season:
-        target_exact_string = f"{search_query} - Saison {target_season}".lower()
-        log(f"🎯 CIBLE SÉRIE PRÉCISE : '{target_exact_string}'")
-    else:
-        target_exact_string = search_query.lower()
-        log(f"🎯 CIBLE FILM : '{target_exact_string}'")
+    log(f"🎯 CIBLE : '{search_query}' (Saison: {target_season if target_season else 'Film'})")
 
+    # --- LOGIQUE FLEXIBLE (REGEX) ---
     found_url = page.evaluate("""
-        ([searchQuery, targetString, isSerie]) => {
+        ([searchQuery, seasonNum]) => {
             const container = document.getElementById('dle-content');
             if (!container) return null;
             const filmBlocks = Array.from(container.querySelectorAll('div.short.film'));
             
+            // Fonction de nettoyage
             const normalize = (str) => str.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^\\w\\s]/g, ' ').replace(/\\s+/g, ' ').trim();
-            const target = normalize(targetString);
-            const baseTitle = normalize(searchQuery);
+            const targetTitle = normalize(searchQuery);
 
             for (const block of filmBlocks) {
                 let titleEl = block.querySelector('div.short-title') || block.querySelector('.short-title a');
                 if (!titleEl) continue;
                 
-                let rawTitle = titleEl.innerText;
+                let rawTitle = titleEl.innerText; // Titre avec majuscules et accents
                 let cleanTitle = normalize(rawTitle);
                 
-                // LOGIQUE SÉRIE : On cherche "Titre - Saison X"
-                if (isSerie) {
-                    // Vérification stricte du format "Nom - Saison X"
-                    if (cleanTitle.includes(target)) {
-                        const linkEl = block.querySelector('.short-poster');
+                // 1. VÉRIFICATION DU TITRE PRINCIPAL
+                if (!cleanTitle.includes(targetTitle)) continue;
+
+                // 2. VÉRIFICATION SÉRIE OU FILM
+                if (seasonNum) {
+                    // Pour les séries, on utilise une REGEX flexible
+                    // Cherche: "Saison X", "Saison 0X", "S X", "S0X", "Season X"
+                    // Le [^0-9]* permet n'importe quel caractère (tiret, deux points, espace) entre le titre et la saison
+                    const regex = new RegExp(`(saison|season|s)[^0-9]*0?${seasonNum}(?!\\d)`, 'i');
+                    
+                    if (regex.test(rawTitle)) {
+                        const linkEl = block.querySelector('.short-poster') || block.querySelector('.short-title a');
                         if (linkEl && linkEl.href && !linkEl.href.includes('xfsearch')) return linkEl.href;
                     }
-                } 
-                // LOGIQUE FILM
-                else {
-                    if (cleanTitle === baseTitle || cleanTitle.includes(baseTitle)) {
-                        const linkEl = block.querySelector('.short-poster');
+                } else {
+                    // Pour les films (Pas de saison)
+                    // On vérifie que ce n'est PAS une saison (pour ne pas cliquer sur une série par erreur)
+                    if (!rawTitle.toLowerCase().includes('saison')) {
+                        const linkEl = block.querySelector('.short-poster') || block.querySelector('.short-title a');
                         if (linkEl && linkEl.href && !linkEl.href.includes('xfsearch')) return linkEl.href;
                     }
                 }
             }
             return null;
         }
-    """, [search_query, target_exact_string, bool(target_season)])
+    """, [search_query, target_season])
     
     if found_url:
         log(f"✨ Trouvé : {found_url}")
         return found_url
-    log("❌ Introuvable (Vérifiez le numéro de saison).")
+    log("❌ Introuvable (Aucun match flexible).")
     return None
 
 def recuperer_lien_vidzy(page):
@@ -194,7 +192,7 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
             
             login_user(page, "Jekle19", "otf192009")
             
-            # Recherche avec la saison si fournie
+            # Recherche avec la saison
             film_url = search_film(page, titre_film, season_number, base_url)
             if not film_url:
                 browser.close(); return None
@@ -219,6 +217,7 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
                 time.sleep(3)
                 
                 if len(popup_bucket) > 0:
+                    log("   -> Popup direct")
                     result = recuperer_lien_vidzy(popup_bucket[0])
                 else:
                     try:
