@@ -55,35 +55,34 @@ def search_film(page, search_query, target_season, base_url):
 
     for query in queries_to_try:
         log(f"🔍 Essai recherche : '{query}'")
-        encoded_title = urllib.parse.quote(query)
-        search_url = f"{base_url}index.php?do=search&subaction=search&story={encoded_title}"
         
         try:
-            page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
-        except:
-            log("❌ Timeout chargement page recherche.")
+            # 1. On s'assure d'être sur la page avec la barre de recherche
+            if not page.locator("#story").is_visible():
+                page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
+            
+            # 2. On tape le nom dans id="story" et on valide
+            page.fill("#story", "") # Vider
+            page.fill("#story", query)
+            page.keyboard.press("Enter")
+            
+            # 3. Attente du container de résultats (Dynamique)
+            page.wait_for_selector("#search-results-content", timeout=10000)
+            time.sleep(2) # Temps pour l'animation fadeIn
+            
+        except Exception as e:
+            log(f"❌ Erreur lors de la manipulation de la barre de recherche : {e}")
             continue
         
-        time.sleep(2)
-        
-        # --- ATTENTE UNIVERSELLE ---
-        try:
-            page.wait_for_selector("div.short", timeout=5000)
-        except:
-            log("⚠️ Aucun élément 'div.short' détecté rapidement.")
-        
-        # --- ANALYSE DES RÉSULTATS ---
+        # --- ANALYSE DES RÉSULTATS (DOM AJAX) ---
         found_href = page.evaluate("""
             ([searchQuery, seasonNum, originalTitle]) => {
-                const container = document.getElementById('dle-content');
+                const container = document.getElementById('search-results-content');
                 if (!container) return { status: "NO_CONTAINER" };
                 
-                // SÉLECTEUR UNIVERSEL
-                const filmBlocks = Array.from(container.querySelectorAll('div.short.film, div.short.serie, div.short'));
-                
-                if (filmBlocks.length === 0) return { status: "NO_BLOCKS" };
+                const items = Array.from(container.querySelectorAll('.search-item'));
+                if (items.length === 0) return { status: "NO_BLOCKS" };
 
-                // Nettoyage
                 const normalize = (str) => str.toLowerCase()
                                               .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
                                               .replace(/[^a-z0-9\\s]/g, ' ') 
@@ -93,46 +92,35 @@ def search_film(page, search_query, target_season, base_url):
                 const targetBase = normalize(originalTitle);
                 const allTitlesSeen = [];
 
-                for (const block of filmBlocks) {
-                    let titleEl = block.querySelector('div.short-title') || block.querySelector('.short-title a');
+                for (const item of items) {
+                    const titleEl = item.querySelector('.search-title');
                     if (!titleEl) continue;
                     
-                    let rawTitle = titleEl.innerText;
-                    let cleanTitle = normalize(rawTitle);
+                    const rawTitle = titleEl.innerText;
+                    const cleanTitle = normalize(rawTitle);
                     allTitlesSeen.push(rawTitle);
 
                     let isMatch = false;
 
-                    // --- LOGIQUE SÉRIE ---
                     if (seasonNum) {
+                        // Logique Série
                         if (cleanTitle.includes(targetBase)) {
-                            // Regex saison flexible
-                            const regexSaison = new RegExp(`(saison|s| )\\s*0?${seasonNum}(?!\\d)`, 'i');
-                            if (regexSaison.test(cleanTitle)) {
-                                isMatch = true;
-                            }
+                            const regexSaison = new RegExp(`(saison|s| )\\\\s*0?${seasonNum}(?!\\\\d)`, 'i');
+                            if (regexSaison.test(cleanTitle)) isMatch = true;
                         }
-                        if (cleanTitle.includes(normalize(targetBase + " saison " + seasonNum))) {
+                    } else {
+                        // Logique Film
+                        if (cleanTitle.includes(targetBase) && !cleanTitle.includes("saison")) {
                             isMatch = true;
-                        }
-                    } 
-                    // --- LOGIQUE FILM ---
-                    else {
-                        if (cleanTitle.includes(targetBase)) {
-                            if (!cleanTitle.includes("saison")) isMatch = true;
                         }
                     }
 
                     if (isMatch) {
-                        // Recherche du lien
-                        let linkEl = block.querySelector('.short-poster') || block.querySelector('a.short-poster');
-                        if (!linkEl) linkEl = block.querySelector('.short-title a');
-                        
-                        // Si le lien est sur le div parent
-                        if (!linkEl && block.tagName === 'A') linkEl = block;
-
-                        if (linkEl && linkEl.href && !linkEl.href.includes('xfsearch')) {
-                            return { status: "FOUND", url: linkEl.href, title: rawTitle };
+                        const onclickVal = item.getAttribute('onclick') || "";
+                        // Extraction de location.href='/chemin.html'
+                        const match = onclickVal.match(/location\\.href='([^']+)'/);
+                        if (match && match[1]) {
+                            return { status: "FOUND", path: match[1], title: rawTitle };
                         }
                     }
                 }
@@ -141,8 +129,10 @@ def search_film(page, search_query, target_season, base_url):
         """, [query, target_season, search_query]) 
         
         if found_href['status'] == "FOUND":
+            # Reconstruction de l'URL (base + /chemin.html)
+            full_url = base_url.rstrip('/') + found_href['path']
             log(f"✨ Match confirmé : {found_href['title']}")
-            return found_href['url']
+            return full_url
         
         log(f"⚠️ Pas trouvé avec '{query}'.")
 
