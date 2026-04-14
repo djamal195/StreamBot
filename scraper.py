@@ -46,9 +46,9 @@ def search_film(page, search_query, target_season, base_url):
     # Stratégie de recherche
     if target_season:
         queries_to_try = [
-            f"{search_query} - Saison {target_season}", # Format officiel
-            f"{search_query} Saison {target_season}",   # Format sans tiret
-            search_query                                # Titre seul (Fallback)
+            f"{search_query} - Saison {target_season}",
+            f"{search_query} Saison {target_season}",
+            search_query
         ]
     else:
         queries_to_try = [search_query]
@@ -58,26 +58,38 @@ def search_film(page, search_query, target_season, base_url):
         
         try:
             # 1. On s'assure d'être sur la page avec la barre de recherche
-            if not page.locator("#story").is_visible():
+            if not page.locator("#story").first.is_visible():
                 page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
             
-            # 2. On tape le nom dans id="story" et on valide
-            page.fill("#story", "") # Vider
-            page.fill("#story", query)
+            # 2. On cible le premier champ #story (au cas où il y en a deux)
+            search_input = page.locator("#story").first
+            search_input.click() # On clique d'abord pour activer le focus
+            search_input.fill("") 
+            search_input.fill(query)
+            
+            # On simule l'appui sur Entrée
             page.keyboard.press("Enter")
             
-            # 3. Attente du container de résultats (Dynamique)
-            page.wait_for_selector("#search-results-content", timeout=10000)
-            time.sleep(2) # Temps pour l'animation fadeIn
+            # 3. Attente du container (on attend qu'il soit présent, pas forcément visible)
+            # car s'il n'y a pas de résultat, il restera caché.
+            container_locator = page.locator("#search-results-content").first
+            container_locator.wait_for(state="attached", timeout=10000)
+            
+            # On laisse 2 secondes pour que l'AJAX remplisse le container
+            time.sleep(2)
             
         except Exception as e:
-            log(f"❌ Erreur lors de la manipulation de la barre de recherche : {e}")
+            log(f"⚠️ Erreur lors de la manipulation de la recherche : {e}")
             continue
         
-        # --- ANALYSE DES RÉSULTATS (DOM AJAX) ---
+        # --- ANALYSE DES RÉSULTATS ---
+        # On passe le container spécifique (le premier trouvé) à l'evaluate
         found_href = page.evaluate("""
             ([searchQuery, seasonNum, originalTitle]) => {
-                const container = document.getElementById('search-results-content');
+                // On cherche le container qui a du contenu (puisqu'il y en a deux)
+                const containers = Array.from(document.querySelectorAll('#search-results-content'));
+                const container = containers.find(c => c.querySelectorAll('.search-item').length > 0) || containers[0];
+                
                 if (!container) return { status: "NO_CONTAINER" };
                 
                 const items = Array.from(container.querySelectorAll('.search-item'));
@@ -90,7 +102,6 @@ def search_film(page, search_query, target_season, base_url):
                                               .trim();
                 
                 const targetBase = normalize(originalTitle);
-                const allTitlesSeen = [];
 
                 for (const item of items) {
                     const titleEl = item.querySelector('.search-title');
@@ -98,18 +109,15 @@ def search_film(page, search_query, target_season, base_url):
                     
                     const rawTitle = titleEl.innerText;
                     const cleanTitle = normalize(rawTitle);
-                    allTitlesSeen.push(rawTitle);
 
                     let isMatch = false;
 
                     if (seasonNum) {
-                        // Logique Série
                         if (cleanTitle.includes(targetBase)) {
                             const regexSaison = new RegExp(`(saison|s| )\\\\s*0?${seasonNum}(?!\\\\d)`, 'i');
                             if (regexSaison.test(cleanTitle)) isMatch = true;
                         }
                     } else {
-                        // Logique Film
                         if (cleanTitle.includes(targetBase) && !cleanTitle.includes("saison")) {
                             isMatch = true;
                         }
@@ -117,24 +125,22 @@ def search_film(page, search_query, target_season, base_url):
 
                     if (isMatch) {
                         const onclickVal = item.getAttribute('onclick') || "";
-                        // Extraction de location.href='/chemin.html'
                         const match = onclickVal.match(/location\\.href='([^']+)'/);
                         if (match && match[1]) {
                             return { status: "FOUND", path: match[1], title: rawTitle };
                         }
                     }
                 }
-                return { status: "NOT_FOUND", titles: allTitlesSeen };
+                return { status: "NOT_FOUND" };
             }
         """, [query, target_season, search_query]) 
         
         if found_href['status'] == "FOUND":
-            # Reconstruction de l'URL (base + /chemin.html)
             full_url = base_url.rstrip('/') + found_href['path']
             log(f"✨ Match confirmé : {found_href['title']}")
             return full_url
         
-        log(f"⚠️ Pas trouvé avec '{query}'.")
+        log(f"⚠️ Pas trouvé avec '{query}' (Container vide ou pas de match).")
 
     log("❌ Introuvable après tous les essais.")
     return None
