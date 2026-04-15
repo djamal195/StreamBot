@@ -42,12 +42,7 @@ def login_user(page, username, password):
     log("ℹ️ Déjà connecté ou bouton absent")
     return True
 
-def search_film(page, search_query, target_season, base_url, target_poster_url=None):
-    # Extraction de l'ID de l'image (ex: abc123.jpg) depuis l'URL TMDB
-    target_poster_id = target_poster_url.split('/')[-1] if target_poster_url else None
-    if target_poster_id:
-        log(f"🖼️ Comparaison par poster activée (ID: {target_poster_id})")
-
+def search_film(page, search_query, target_season, base_url):
     # Stratégie de recherche
     if target_season:
         queries_to_try = [
@@ -66,16 +61,17 @@ def search_film(page, search_query, target_season, base_url, target_poster_url=N
             if not page.locator("#story").first.is_visible():
                 page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
             
-            # 2. On cible le premier champ #story
+            # 2. On cible le premier champ #story (au cas où il y en a deux)
             search_input = page.locator("#story").first
-            search_input.click()
+            search_input.click() # On clique d'abord pour activer le focus
             search_input.fill("") 
             search_input.fill(query)
             
             # On simule l'appui sur Entrée
             page.keyboard.press("Enter")
             
-            # 3. Attente du container présent (attached)
+            # 3. Attente du container (on attend qu'il soit présent, pas forcément visible)
+            # car s'il n'y a pas de résultat, il restera caché.
             container_locator = page.locator("#search-results-content").first
             container_locator.wait_for(state="attached", timeout=10000)
             
@@ -86,9 +82,11 @@ def search_film(page, search_query, target_season, base_url, target_poster_url=N
             log(f"⚠️ Erreur lors de la manipulation de la recherche : {e}")
             continue
         
-        # --- ANALYSE DES RÉSULTATS (AVEC POSTER + TITRE) ---
+        # --- ANALYSE DES RÉSULTATS ---
+        # On passe le container spécifique (le premier trouvé) à l'evaluate
         found_href = page.evaluate("""
-            ([searchQuery, seasonNum, originalTitle, targetPosterId]) => {
+            ([searchQuery, seasonNum, originalTitle]) => {
+                // On cherche le container qui a du contenu (puisqu'il y en a deux)
                 const containers = Array.from(document.querySelectorAll('#search-results-content'));
                 const container = containers.find(c => c.querySelectorAll('.search-item').length > 0) || containers[0];
                 
@@ -112,31 +110,16 @@ def search_film(page, search_query, target_season, base_url, target_poster_url=N
                     const rawTitle = titleEl.innerText;
                     const cleanTitle = normalize(rawTitle);
 
-                    // --- RÉCUPÉRATION DU POSTER DU RÉSULTAT ---
-                    const imgEl = item.querySelector('.search-poster img');
-                    const currentPosterUrl = imgEl ? imgEl.src : "";
-                    const currentPosterId = currentPosterUrl.split('/').pop();
-
                     let isMatch = false;
 
-                    // PRIORITÉ 1 : Comparaison par Poster ID (si disponible)
-                    if (targetPosterId && currentPosterId && targetPosterId !== "N/A") {
-                        if (currentPosterId === targetPosterId) {
-                            isMatch = true;
+                    if (seasonNum) {
+                        if (cleanTitle.includes(targetBase)) {
+                            const regexSaison = new RegExp(`(saison|s| )\\\\s*0?${seasonNum}(?!\\\\d)`, 'i');
+                            if (regexSaison.test(cleanTitle)) isMatch = true;
                         }
-                    }
-
-                    // PRIORITÉ 2 : Fallback sur le Titre (si pas de match poster ou pas de poster fourni)
-                    if (!isMatch) {
-                        if (seasonNum) {
-                            if (cleanTitle.includes(targetBase)) {
-                                const regexSaison = new RegExp(`(saison|s| )\\\\s*0?${seasonNum}(?!\\\\d)`, 'i');
-                                if (regexSaison.test(cleanTitle)) isMatch = true;
-                            }
-                        } else {
-                            if (cleanTitle.includes(targetBase) && !cleanTitle.includes("saison")) {
-                                isMatch = true;
-                            }
+                    } else {
+                        if (cleanTitle.includes(targetBase) && !cleanTitle.includes("saison")) {
+                            isMatch = true;
                         }
                     }
 
@@ -150,7 +133,7 @@ def search_film(page, search_query, target_season, base_url, target_poster_url=N
                 }
                 return { status: "NOT_FOUND" };
             }
-        """, [query, target_season, search_query, target_poster_id]) 
+        """, [query, target_season, search_query]) 
         
         if found_href['status'] == "FOUND":
             full_url = base_url.rstrip('/') + found_href['path']
@@ -249,7 +232,7 @@ def extract_episodes_from_container(page, context, container_id, lang_name):
 
     return links
 
-def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=False, tmdb_poster_url=None):
+def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=False):
     base_url = "https://french-stream.one/"
     
     with sync_playwright() as p:
@@ -268,7 +251,7 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
             login_user(page, "Jekle19", "otf192009")
             
             # Recherche
-            film_url = search_film(page, titre_film, season_number, base_url, tmdb_poster_url)
+            film_url = search_film(page, titre_film, season_number, base_url)
             
             if not film_url:
                 log("🛑 Arrêt : Page introuvable.")
