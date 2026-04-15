@@ -249,7 +249,7 @@ def extract_episodes_from_container(page, context, container_id, lang_name):
 
     return links
 
-def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=False, , tmdb_poster_url=None):
+def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=False, tmdb_poster_url=None):
     base_url = "https://french-stream.one/"
     
     with sync_playwright() as p:
