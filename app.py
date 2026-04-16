@@ -184,6 +184,97 @@ def watch(slug):
     if slug in db: return render_template('movie.html', item=db[slug])
     return "404", 404
 
+@app.route('/privacy')
+def privacy():
+    return """
+    <html>
+    <head><title>Politique de confidentialité</title></head>
+    <body style="font-family: Arial; padding: 40px;">
+        <h1>Politique de confidentialité</h1>
+        <p><b>Dernière mise à jour :</b> 2026</p>
+
+        <p>StreamBot respecte votre vie privée.</p>
+
+        <h2>Données collectées</h2>
+        <ul>
+            <li>Identifiant utilisateur (Messenger)</li>
+            <li>Messages envoyés</li>
+            <li>Données techniques</li>
+        </ul>
+
+        <h2>Utilisation</h2>
+        <p>Les données servent uniquement à :</p>
+        <ul>
+            <li>Répondre aux demandes</li>
+            <li>Améliorer le service</li>
+        </ul>
+
+        <h2>Partage</h2>
+        <p>Aucune donnée n’est vendue ou partagée.</p>
+
+        <h2>Contact</h2>
+        <p>📧 carterdjamaldine@gmail.com</p>
+    </body>
+    </html>
+    """
+
+@app.route('/terms')
+def terms():
+    return """
+    <html>
+    <head><title>Conditions d'utilisation</title></head>
+    <body style="font-family: Arial; padding: 40px;">
+        <h1>Conditions d'utilisation</h1>
+        <p><b>Dernière mise à jour :</b> 2026</p>
+
+        <h2>Utilisation du service</h2>
+        <p>Vous acceptez d'utiliser StreamBot de manière légale.</p>
+
+        <h2>Interdictions</h2>
+        <ul>
+            <li>Activités illégales</li>
+            <li>Spam ou abus</li>
+            <li>Tentatives de piratage</li>
+        </ul>
+
+        <h2>Responsabilité</h2>
+        <p>Le service peut être indisponible ou contenir des erreurs.</p>
+
+        <h2>Modification</h2>
+        <p>Nous pouvons modifier le service à tout moment.</p>
+
+        <h2>Contact</h2>
+        <p>📧 carterdjamaldine@gmail.com</p>
+    </body>
+    </html>
+    """
+
+@app.route('/delete-data')
+def delete_data():
+    return """
+    <html>
+    <head><title>Suppression des données</title></head>
+    <body style="font-family: Arial; padding: 40px;">
+        <h1>Suppression des données</h1>
+        <p><b>Dernière mise à jour :</b> 2026</p>
+
+        <p>Vous pouvez demander la suppression de vos données à tout moment.</p>
+
+        <h2>Comment faire ?</h2>
+        <ul>
+            <li>Envoyer un email à : carterdjamaldine@gmail.com</li>
+            <li>Ou contacter le bot directement</li>
+        </ul>
+
+        <h2>Délai</h2>
+        <p>Traitement sous 7 jours maximum.</p>
+
+        <h2>Résultat</h2>
+        <p>Toutes vos données seront supprimées.</p>
+    </body>
+    </html>
+    """
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
