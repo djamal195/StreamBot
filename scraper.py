@@ -22,23 +22,34 @@ def normalize_title(title):
 
 def login_user(page, username, password):
     log("🔐 Tentative de connexion...")
-    if page.locator("#loginButtonContainer").is_visible():
+
+    login_btn = page.locator("a[onclick*='toggleLoginModal']")
+
+    if login_btn.is_visible():
         try:
-            page.evaluate("document.querySelector('#loginButtonContainer').click()")
+            login_btn.click()
+
             time.sleep(2)
+
             page.fill("#login_name", username)
-            time.sleep(0.5)
             page.fill("#login_password", password)
-            time.sleep(0.5)
+
             page.keyboard.press("Enter")
+
             time.sleep(5)
-            try: page.wait_for_load_state("domcontentloaded", timeout=10000)
-            except: pass
+
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=10000)
+            except:
+                pass
+
             log("✅ Login envoyé.")
             return True
+
         except Exception as e:
             log(f"⚠️ Erreur Login : {e}")
             return False
+
     log("ℹ️ Déjà connecté ou bouton absent")
     return True
 
