@@ -23,35 +23,42 @@ def normalize_title(title):
 def login_user(page, username, password):
     log("🔐 Tentative de connexion...")
 
-    login_btn = page.locator("a[onclick*='toggleLoginModal']")
+    try:
+        # Ouvrir le menu compte
+        page.locator(".topnav-account").click()
+        time.sleep(1)
 
-    if login_btn.is_visible():
+        # Ouvrir le panneau compte
+        page.locator(".topnav-account-panel").click()
+        time.sleep(1)
+
+        # Ouvrir la fenêtre de connexion
+        page.locator("a[onclick*='toggleLoginModal']").click()
+        time.sleep(2)
+
+        # Remplir les identifiants
+        page.fill("#login_name", username)
+        time.sleep(0.5)
+
+        page.fill("#login_password", password)
+        time.sleep(0.5)
+
+        # Valider
+        page.keyboard.press("Enter")
+
+        time.sleep(5)
+
         try:
-            login_btn.click()
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except:
+            pass
 
-            time.sleep(2)
+        log("✅ Login envoyé.")
+        return True
 
-            page.fill("#login_name", username)
-            page.fill("#login_password", password)
-
-            page.keyboard.press("Enter")
-
-            time.sleep(5)
-
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=10000)
-            except:
-                pass
-
-            log("✅ Login envoyé.")
-            return True
-
-        except Exception as e:
-            log(f"⚠️ Erreur Login : {e}")
-            return False
-
-    log("ℹ️ Déjà connecté ou bouton absent")
-    return True
+    except Exception as e:
+        log(f"⚠️ Erreur Login : {e}")
+        return False
 
 def search_film(page, search_query, target_season, base_url):
     # Stratégie de recherche
