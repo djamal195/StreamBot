@@ -248,7 +248,7 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
             log("🌐 Navigation...")
             page.goto(base_url, timeout=60000)
             
-            login_user(page, "Jekle19", "otf192009")
+            login_user(page, "Jekle19", "c01h2bc3zp5")
             
             # Recherche
             film_url = search_film(page, titre_film, season_number, base_url)
