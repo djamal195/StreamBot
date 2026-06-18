@@ -22,42 +22,45 @@ def normalize_title(title):
 
 def login_user(page, username, password):
     log("🔐 Tentative de connexion...")
-
     try:
-        # Ouvrir le menu compte
-        page.locator(".topnav-account").click()
-        time.sleep(1)
-
-        # Ouvrir le panneau compte
-        page.locator(".topnav-account-panel").click()
-        time.sleep(1)
-
-        # Ouvrir la fenêtre de connexion
-        page.locator(".topnav-account-item").click()
-        time.sleep(2)
-
-        # Remplir les identifiants
-        page.fill("#login_name", username)
-        time.sleep(0.5)
-
-        page.fill("#login_password", password)
-        time.sleep(0.5)
-
-        # Valider
-        page.keyboard.press("Enter")
-
-        time.sleep(5)
-
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=10000)
-        except:
-            pass
-
-        log("✅ Login envoyé.")
-        return True
+        # 1. On s'assure que le menu déroulant est ouvert
+        # On cherche le summary (le bouton avec l'icône utilisateur)
+        trigger = page.locator(".topnav-account-trigger")
+        if trigger.is_visible():
+            trigger.click()
+            time.sleep(1) # Petit temps pour l'animation du menu
+        
+        # 2. On clique sur le lien de connexion qui ouvre le modal
+        # On utilise un sélecteur qui cible spécifiquement le lien avec 'toggleLoginModal'
+        login_link = page.locator("a.topnav-account-item[onclick*='toggleLoginModal']")
+        
+        if login_link.is_visible():
+            login_link.click()
+            log("🖱️ Clic sur le bouton de connexion (modal)...")
+            
+            # 3. On attend que le modal soit visible (le div avec l'id loginModal)
+            page.wait_for_selector("#login_name", state="visible", timeout=5000)
+            
+            # 4. Remplissage des informations
+            page.fill("#login_name", username)
+            time.sleep(0.5)
+            page.fill("#login_password", password)
+            time.sleep(0.5)
+            
+            # 5. On valide
+            page.keyboard.press("Enter")
+            
+            # On attend que le modal disparaisse ou que la page recharge
+            time.sleep(5)
+            log("✅ Login envoyé.")
+            return True
+        else:
+            log("ℹ️ Le lien de connexion n'est pas visible (peut-être déjà connecté ?)")
+            return True
 
     except Exception as e:
-        log(f"⚠️ Erreur Login : {e}")
+        log(f"⚠️ Erreur lors de la connexion : {e}")
+        # On tente de continuer quand même au cas où on est déjà loggé
         return False
 
 def search_film(page, search_query, target_season, base_url):
@@ -265,7 +268,12 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
         try:
             log("🌐 Navigation...")
             page.goto(base_url, timeout=60000)
-            
+
+                 # --- AJOUT DE LA PAUSE DE 5 SECONDES ICI ---
+            log("⏳ Pause de 5 secondes avant connexion...")
+            time.sleep(5)
+            # -------------------------------------------   
+
             login_user(page, "Jekle19", "c01h2bc3zp5")
             
             # Recherche
