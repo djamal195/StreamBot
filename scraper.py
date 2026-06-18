@@ -33,7 +33,7 @@ def login_user(page, username, password):
         time.sleep(1)
 
         # Ouvrir la fenêtre de connexion
-        page.locator(".topnav-account-item']").click()
+        page.locator(".topnav-account-item").click()
         time.sleep(2)
 
         # Remplir les identifiants
