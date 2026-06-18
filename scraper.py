@@ -23,44 +23,37 @@ def normalize_title(title):
 def login_user(page, username, password):
     log("🔐 Tentative de connexion...")
     try:
-        # 1. On s'assure que le menu déroulant est ouvert
-        # On cherche le summary (le bouton avec l'icône utilisateur)
+        # On cible le menu compte
         trigger = page.locator(".topnav-account-trigger")
-        if trigger.is_visible():
-            trigger.click()
-            time.sleep(1) # Petit temps pour l'animation du menu
-        
-        # 2. On clique sur le lien de connexion qui ouvre le modal
-        # On utilise un sélecteur qui cible spécifiquement le lien avec 'toggleLoginModal'
-        login_link = page.locator("a.topnav-account-item[onclick*='toggleLoginModal']")
-        
-        if login_link.is_visible():
-            login_link.click()
-            log("🖱️ Clic sur le bouton de connexion (modal)...")
-            
-            # 3. On attend que le modal soit visible (le div avec l'id loginModal)
-            page.wait_for_selector("#login_name", state="visible", timeout=5000)
-            
-            # 4. Remplissage des informations
-            page.fill("#login_name", username)
-            time.sleep(0.5)
-            page.fill("#login_password", password)
-            time.sleep(0.5)
-            
-            # 5. On valide
-            page.keyboard.press("Enter")
-            
-            # On attend que le modal disparaisse ou que la page recharge
-            time.sleep(5)
-            log("✅ Login envoyé.")
-            return True
-        else:
-            log("ℹ️ Le lien de connexion n'est pas visible (peut-être déjà connecté ?)")
-            return True
+        trigger.wait_for(state="attached", timeout=10000)
+        trigger.evaluate("el => el.click()")
+        time.sleep(2)
 
+        # On clique sur le lien du modal
+        login_link = page.locator("a.topnav-account-item[onclick*='toggleLoginModal']")
+        if login_link.count() > 0:
+            login_link.evaluate("el => el.click()")
+            log("🔓 Modal de connexion ouvert.")
+
+            # --- CORRECTION ICI : On cible le premier visible ou via le parent #loginModal ---
+            # On utilise .first ou le sélecteur combiné pour éviter l'erreur "resolved to 3 elements"
+            user_input = page.locator("#loginModal #login_name").first
+            pass_input = page.locator("#loginModal #login_password").first
+            
+            user_input.wait_for(state="attached", timeout=5000)
+            
+            # Utilisation de fill sur les éléments spécifiques
+            user_input.fill(username)
+            pass_input.fill(password)
+
+            log("⌨️ Envoi des identifiants...")
+            page.keyboard.press("Enter")
+            time.sleep(5)
+            log("✅ Connexion envoyée.")
+            return True
+        return False
     except Exception as e:
-        log(f"⚠️ Erreur lors de la connexion : {e}")
-        # On tente de continuer quand même au cas où on est déjà loggé
+        log(f"⚠️ Erreur Login : {e}")
         return False
 
 def search_film(page, search_query, target_season, base_url):
