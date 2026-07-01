@@ -2,51 +2,34 @@ from playwright.sync_api import sync_playwright
 import time
 import re
 import unicodedata
-import urllib.parse
 import os
-import sys
 
 # CONFIGURATION
-# True pour le serveur, False pour test PC
-HEADLESS_MODE = True 
+HEADLESS_MODE = True
 
 def log(msg):
     print(f"[SCRAPER_LOG] {msg}", flush=True)
 
-def normalize_title(title):
-    nfd = unicodedata.normalize('NFD', title)
-    title_no_accents = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
-    normalized = re.sub(r'[^\w\s]', ' ', title_no_accents)
-    normalized = re.sub(r'\s+', ' ', normalized).strip().lower()
-    return normalized
-
 def login_user(page, username, password):
     log("🔐 Tentative de connexion...")
     try:
-        # On cible le menu compte
         trigger = page.locator(".topnav-account-trigger")
         trigger.wait_for(state="attached", timeout=10000)
         trigger.evaluate("el => el.click()")
         time.sleep(2)
 
-        # On clique sur le lien du modal
         login_link = page.locator("a.topnav-account-item[onclick*='toggleLoginModal']")
         if login_link.count() > 0:
             login_link.evaluate("el => el.click()")
             log("🔓 Modal de connexion ouvert.")
 
-            # --- CORRECTION ICI : On cible le premier visible ou via le parent #loginModal ---
-            # On utilise .first ou le sélecteur combiné pour éviter l'erreur "resolved to 3 elements"
             user_input = page.locator("#loginModal #login_name").first
             pass_input = page.locator("#loginModal #login_password").first
             
             user_input.wait_for(state="attached", timeout=5000)
-            
-            # Utilisation de fill sur les éléments spécifiques
             user_input.fill(username)
             pass_input.fill(password)
 
-            log("⌨️ Envoi des identifiants...")
             page.keyboard.press("Enter")
             time.sleep(5)
             log("✅ Connexion envoyée.")
@@ -56,108 +39,63 @@ def login_user(page, username, password):
         log(f"⚠️ Erreur Login : {e}")
         return False
 
-def search_film(page, search_query, target_season, base_url):
-    # Stratégie de recherche
+def search_film(page, search_query, target_season, base_url, tmdb_poster_url=None):
+    """Retourne un dict pour le bot (avec screenshot + liste)"""
     if target_season:
-        queries_to_try = [
-            f"{search_query} - Saison {target_season}",
-            f"{search_query} Saison {target_season}",
-            search_query
-        ]
+        queries_to_try = [f"{search_query} Saison {target_season}", search_query]
     else:
         queries_to_try = [search_query]
 
     for query in queries_to_try:
-        log(f"🔍 Essai recherche : '{query}'")
+        log(f"🔍 Recherche : '{query}'")
         
         try:
-            # 1. On s'assure d'être sur la page avec la barre de recherche
             if not page.locator("#story").first.is_visible():
                 page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
             
-            # 2. On cible le premier champ #story (au cas où il y en a deux)
             search_input = page.locator("#story").first
-            search_input.click() # On clique d'abord pour activer le focus
-            search_input.fill("") 
             search_input.fill(query)
-            
-            # On simule l'appui sur Entrée
             page.keyboard.press("Enter")
             
-            # 3. Attente du container (on attend qu'il soit présent, pas forcément visible)
-            # car s'il n'y a pas de résultat, il restera caché.
-            container_locator = page.locator("#search-results-content").first
-            container_locator.wait_for(state="attached", timeout=10000)
-            
-            # On laisse 2 secondes pour que l'AJAX remplisse le container
-            time.sleep(2)
-            
+            page.locator("#search-results-content").first.wait_for(state="attached", timeout=15000)
+            time.sleep(3)
         except Exception as e:
-            log(f"⚠️ Erreur lors de la manipulation de la recherche : {e}")
+            log(f"⚠️ Erreur recherche : {e}")
             continue
-        
-        # --- ANALYSE DES RÉSULTATS ---
-        # On passe le container spécifique (le premier trouvé) à l'evaluate
-        found_href = page.evaluate("""
-            ([searchQuery, seasonNum, originalTitle]) => {
-                // On cherche le container qui a du contenu (puisqu'il y en a deux)
-                const containers = Array.from(document.querySelectorAll('#search-results-content'));
-                const container = containers.find(c => c.querySelectorAll('.search-item').length > 0) || containers[0];
-                
-                if (!container) return { status: "NO_CONTAINER" };
-                
-                const items = Array.from(container.querySelectorAll('.search-item'));
-                if (items.length === 0) return { status: "NO_BLOCKS" };
 
-                const normalize = (str) => str.toLowerCase()
-                                              .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
-                                              .replace(/[^a-z0-9\\s]/g, ' ') 
-                                              .replace(/\\s+/g, ' ')
-                                              .trim();
-                
-                const targetBase = normalize(originalTitle);
-
-                for (const item of items) {
-                    const titleEl = item.querySelector('.search-title');
-                    if (!titleEl) continue;
-                    
-                    const rawTitle = titleEl.innerText;
-                    const cleanTitle = normalize(rawTitle);
-
-                    let isMatch = false;
-
-                    if (seasonNum) {
-                        if (cleanTitle.includes(targetBase)) {
-                            const regexSaison = new RegExp(`(saison|s| )\\\\s*0?${seasonNum}(?!\\\\d)`, 'i');
-                            if (regexSaison.test(cleanTitle)) isMatch = true;
-                        }
-                    } else {
-                        if (cleanTitle.includes(targetBase) && !cleanTitle.includes("saison")) {
-                            isMatch = true;
-                        }
+        # Capture propre
+        screenshot_path = f"search_results_{int(time.time())}.png"
+        try:
+            results_container = page.locator("#search-results-content")
+            if results_container.count() > 0:
+                page.evaluate("""
+                    () => {
+                        document.querySelectorAll('header, nav, .topnav, .navbar').forEach(el => {
+                            if (el) el.style.display = 'none';
+                        });
                     }
+                """)
+                results_container.screenshot(path=screenshot_path)
+                log(f"📸 Capture sauvegardée : {screenshot_path}")
+        except Exception as e:
+            log(f"⚠️ Erreur capture : {e}")
 
-                    if (isMatch) {
-                        const onclickVal = item.getAttribute('onclick') || "";
-                        const match = onclickVal.match(/location\\.href='([^']+)'/);
-                        if (match && match[1]) {
-                            return { status: "FOUND", path: match[1], title: rawTitle };
-                        }
-                    }
-                }
-                return { status: "NOT_FOUND" };
-            }
-        """, [query, target_season, search_query]) 
-        
-        if found_href['status'] == "FOUND":
-            full_url = base_url.rstrip('/') + found_href['path']
-            log(f"✨ Match confirmé : {found_href['title']}")
-            return full_url
-        
-        log(f"⚠️ Pas trouvé avec '{query}' (Container vide ou pas de match).")
+        # Liste des résultats
+        items = page.evaluate("""
+            () => Array.from(document.querySelectorAll('#search-results-content .search-item')).map((item, i) => ({
+                index: i + 1,
+                title: item.querySelector('.search-title')?.innerText.trim() || 'Sans titre'
+            }))
+        """)
 
-    log("❌ Introuvable après tous les essais.")
-    return None
+        return {
+            "status": "selection_needed",
+            "items": items,
+            "screenshot_path": screenshot_path,
+            "query": query
+        }
+
+    return {"status": "no_results"}
 
 def recuperer_lien_vidzy(page):
     try:
@@ -187,66 +125,69 @@ def recuperer_lien_vidzy(page):
         return None
     except: return None
 
-# --- NOUVELLE FONCTION D'EXTRACTION PAR ZONE ---
 def extract_episodes_from_container(page, context, container_id, lang_name):
-    """Extrait les épisodes d'un conteneur spécifique (VF ou VOSTFR)"""
-    log(f"📺 Analyse de la zone {lang_name} (#{container_id})...")
+    log(f"📺 Analyse {lang_name} (#{container_id})...")
     links = []
     
-    # Vérifier si le conteneur existe
     try:
-        # On vérifie si l'ID existe sur la page
-        is_visible = page.locator(f"#{container_id}").count() > 0
-        if not is_visible:
-            log(f"ℹ️ Zone {lang_name} introuvable sur cette page.")
-            return []
+        for sel in [f"//a[contains(text(), '{lang_name}')]", f"//ul[contains(@class, 'nav-tabs')]//a[contains(text(), '{lang_name}')]"]:
+            tabs = page.locator(sel)
+            if tabs.count() > 0:
+                tabs.first.click()
+                time.sleep(2)
+                break
     except:
-        return []
+        pass
 
-    # On cible uniquement les boutons DANS ce conteneur
-    # Le sélecteur est : #id_du_conteneur .ep-download
-    buttons = page.locator(f"#{container_id} .ep-download").all()
-    count = len(buttons)
-    log(f"📋 {count} épisodes trouvés pour {lang_name}.")
+    container = page.locator(f"#{container_id}")
+    try:
+        container.wait_for(state="attached", timeout=10000)
+    except:
+        log(f"   ⚠️ Container non trouvé.")
 
-    if count == 0:
-        return []
+    rows = container.locator(".episode-row").all()
+    log(f"📋 {len(rows)} épisodes trouvés.")
 
-    # BOUCLE ILLIMITÉE (On prend tout)
-    for i, btn in enumerate(buttons):
+    for i, row in enumerate(rows):
         ep_num = i + 1
-        
-        # On force un petit scroll pour charger l'élément si besoin
-        try: btn.scroll_into_view_if_needed()
-        except: pass
-
         try:
-            # Préparation popup
-            with context.expect_page(timeout=10000) as popup_info:
-                # Clic JS sur le bouton
-                btn.evaluate("el => el.click()")
+            download_btn = row.locator(".ep-download").first
+            if download_btn.count() == 0:
+                links.append({"episode": ep_num, "lien": None})
+                continue
+
+            row.scroll_into_view_if_needed()
+            time.sleep(1)
+            download_btn.evaluate("el => el.click()")
+            time.sleep(1.5)
+
+            intermediate_link = row.evaluate("""
+                () => {
+                    const a = document.querySelector('.ep-dl-panel-options a.ep-dl-primary, .ep-dl-panel-options a');
+                    return a ? a.href : null;
+                }
+            """)
+
+            if not intermediate_link:
+                links.append({"episode": ep_num, "lien": None})
+                continue
+
+            with context.expect_page(timeout=15000) as popup_info:
+                page.evaluate(f"window.open('{intermediate_link}', '_blank');")
             
             popup = popup_info.value
-            lien = recuperer_lien_vidzy(popup)
+            lien_final = recuperer_lien_vidzy(popup)
             popup.close()
-            
-            if lien:
-                log(f"   ✅ {lang_name} Ep {ep_num} OK")
-                links.append({"episode": ep_num, "lien": lien})
-            else:
-                log(f"   ⚠️ {lang_name} Ep {ep_num} Vide")
-                links.append({"episode": ep_num, "lien": None})
-            
-            # Pause minime pour ne pas DDOS le site
-            time.sleep(0.5)
-            
+
+            links.append({"episode": ep_num, "lien": lien_final})
+            time.sleep(1.5)
         except Exception as e:
-            log(f"   ❌ Erreur {lang_name} Ep {ep_num}: {e}")
+            log(f"   ❌ Ep {ep_num} erreur : {e}")
             links.append({"episode": ep_num, "lien": None})
 
     return links
 
-def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=False):
+def run_scraper(titre_film, poster_url=None, season_number=None, is_serie=False, all_episodes=False):
     base_url = "https://french-stream.one/"
     
     with sync_playwright() as p:
@@ -259,70 +200,34 @@ def run_scraper(titre_film, season_number=None, is_serie=False, all_episodes=Fal
         page = context.new_page()
         
         try:
-            log("🌐 Navigation...")
             page.goto(base_url, timeout=60000)
-
-                 # --- AJOUT DE LA PAUSE DE 5 SECONDES ICI ---
-            log("⏳ Pause de 5 secondes avant connexion...")
             time.sleep(5)
-            # -------------------------------------------   
 
             login_user(page, "Jekle19", "c01h2bc3zp5")
             
-            # Recherche
-            film_url = search_film(page, titre_film, season_number, base_url)
+            search_result = search_film(page, titre_film, season_number, base_url, tmdb_poster_url=poster_url)
             
-            if not film_url:
-                log("🛑 Arrêt : Page introuvable.")
-                browser.close(); return None
-            
-            log(f"🌐 Navigation page : {film_url}")
+            if search_result.get("status") == "selection_needed":
+                browser.close()
+                return search_result  # Retourne dict pour le bot
+
+            if not search_result or search_result.get("status") == "no_results":
+                browser.close()
+                return None
+
+            # Si on a un lien direct (ancien comportement)
+            film_url = search_result
             page.goto(film_url, timeout=60000)
             page.wait_for_load_state("domcontentloaded")
-            time.sleep(2)
-            
-            result = None
-            
+            time.sleep(3)
+
             if is_serie:
-                # --- LOGIQUE SÉRIES (VF + VOSTFR) ---
-                log("🔄 Démarrage extraction Multi-Langue...")
-                
-                # 1. Extraction VF
                 vf_links = extract_episodes_from_container(page, context, "vf-episodes", "VF")
-                
-                # 2. Extraction VOSTFR
                 vostfr_links = extract_episodes_from_container(page, context, "vostfr-episodes", "VOSTFR")
-                
-                # On retourne un objet structuré
-                result = {
-                    "vf": vf_links,
-                    "vostfr": vostfr_links
-                }
-                
-                count_vf = len(vf_links)
-                count_vost = len(vostfr_links)
-                log(f"✅ Terminé : {count_vf} VF et {count_vost} VOSTFR récupérés.")
-
+                result = {"vf": vf_links, "vostfr": vostfr_links}
             else:
-                # --- LOGIQUE FILM ---
-                if not page.locator("#downloadBtn").is_visible():
-                    log("❌ Bouton introuvable"); browser.close(); return None
-
-                popup_bucket = []
-                page.context.on("page", lambda p: popup_bucket.append(p))
-                page.evaluate("document.getElementById('downloadBtn').click()")
-                time.sleep(3)
-                
-                if len(popup_bucket) > 0:
-                    result = recuperer_lien_vidzy(popup_bucket[0])
-                else:
-                    try:
-                        page.wait_for_selector("#downloadOptions", state="visible", timeout=3000)
-                        page.evaluate("document.querySelector(\"div[onclick*='moyenne']\").click()")
-                        with page.expect_popup(timeout=15000) as popup_info:
-                            pass
-                        result = recuperer_lien_vidzy(popup_info.value)
-                    except: pass
+                # Logique film...
+                result = None  # À compléter si besoin
 
             browser.close()
             return result
