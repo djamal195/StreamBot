@@ -2,3 +2,4 @@ flask
 playwright
 requests
 gunicorn
+pymongo
