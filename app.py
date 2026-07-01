@@ -16,6 +16,7 @@ MONGO_URI = os.environ.get("MONGO_URI")
 client = MongoClient(MONGO_URI)
 db = client["streambot"]
 collection = db["contents"]
+pending_selections = db["pending_selections"]  # Nouvelle collection pour l'état
 
 PAGE_ACCESS_TOKEN = "EAA1kj7YrrxIBQU1uaYs9ZCaWzljLrhwaZAyaaAFJdHbryb9uEZA9EuyGixG4oOvJqRTzoNZChKHB2aHZBwWRMZBQxXncPyJnT4AoLsdBn9w9BJ1N7ZBtXVOe60rua7Li3JPF2Ha0OPEyxXZCmnzBuufagdKONIoYmZCwv6tWlY3VZCfRZCPOpy4gNjXu9NRyeylY50OAXU7QYRJEQZDZD"
 VERIFY_TOKEN = "otf_secret_password"
@@ -29,6 +30,18 @@ def fb_call(endpoint, payload):
 
 def send_text(user_id, text):
     fb_call("messages", {"recipient": {"id": user_id}, "message": {"text": text}})
+
+def send_image(user_id, image_path):
+    """Envoie une image locale via URL publique"""
+    if not image_path or not os.path.exists(image_path):
+        send_text(user_id, "❌ Image non trouvée.")
+        return
+    domain = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+    image_url = f"https://{domain}/{image_path}"
+    fb_call("messages", {
+        "recipient": {"id": user_id},
+        "message": {"attachment": {"type": "image", "payload": {"url": image_url}}}
+    })
 
 def send_choice_card(user_id, user_text):
     element = {
@@ -99,16 +112,32 @@ def process_background(user_id, title, year, is_series, season_num):
 
     if isinstance(result, dict) and result.get("status") == "selection_needed":
         screenshot = result.get("screenshot_path")
-        send_text(user_id, f"🔍 Plusieurs résultats trouvés pour '{title}'. Je t'envoie l'image...")
-        if screenshot and os.path.exists(screenshot):
-            image_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{screenshot}"
-            fb_call("messages", {
-                "recipient": {"id": user_id},
-                "message": {"attachment": {"type": "image", "payload": {"url": image_url}}}
-            })
-        send_text(user_id, "Réponds avec le numéro du bon résultat (ex: 2)")
+        items = result.get("items", [])
+        
+        # Sauvegarder l'état en attente
+        pending_selections.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "user_id": user_id,
+                "query": result.get("query"),
+                "items": items,
+                "screenshot": screenshot,
+                "timestamp": datetime.utcnow()
+            }},
+            upsert=True
+        )
+
+        send_text(user_id, f"🔍 Plusieurs résultats trouvés pour '{title}'.")
+        if screenshot:
+            send_image(user_id, screenshot)
+        
+        text = "Réponds avec le numéro du bon résultat :\n"
+        for item in items[:6]:
+            text += f"{item['index']}. {item['title']}\n"
+        send_text(user_id, text)
         return
 
+    # Si pas de sélection needed
     if result:
         info = get_movie_info(title)
         data = {
@@ -122,12 +151,12 @@ def process_background(user_id, title, year, is_series, season_num):
             "created_at": datetime.utcnow()
         }
         collection.insert_one(data)
-        
         url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/watch/{slug}"
         send_final_link(user_id, url)
     else:
         send_text(user_id, "❌ Contenu introuvable.")
 
+# ====================== GESTION DES MESSAGES ======================
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -139,15 +168,39 @@ def webhook():
         data = request.json
         if data and data.get("object") == "page":
             for entry in data["entry"]:
-                for event in entry["messaging"]:
+                for event in entry.get("messaging", []):
                     uid = event["sender"]["id"]
-                    if "message" in event:
+                    if "message" in event and "text" in event["message"]:
                         handle_message(uid, event["message"]["text"])
                     elif "postback" in event:
                         handle_postback(uid, event["postback"]["payload"])
         return "OK", 200
 
 def handle_message(user_id, text):
+    text = text.strip()
+    
+    # Vérifier si c'est une réponse à une sélection en cours
+    pending = pending_selections.find_one({"user_id": user_id})
+    if pending:
+        try:
+            choice = int(text)
+            items = pending.get("items", [])
+            selected = next((item for item in items if item["index"] == choice), None)
+            
+            if selected:
+                send_text(user_id, f"✅ Tu as choisi : {selected['title']}")
+                # Ici on peut relancer le scraper avec le choix
+                # Pour l'instant on supprime l'état
+                pending_selections.delete_one({"user_id": user_id})
+                send_text(user_id, "🔄 Je continue l'extraction...")
+                # TODO: relancer avec le choix
+            else:
+                send_text(user_id, "❌ Numéro invalide.")
+        except:
+            send_choice_card(user_id, text)  # Nouveau titre
+        return
+
+    # Sinon, comportement normal
     send_choice_card(user_id, text)
 
 def handle_postback(user_id, payload):
