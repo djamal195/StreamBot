@@ -56,32 +56,44 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
             search_input.fill(query)
             page.keyboard.press("Enter")
             
-            # Attente + sélection plus précise
-            page.wait_for_selector("#search-results-content", timeout=15000)
-            time.sleep(3)
+            # Attente plus robuste
+            time.sleep(4)  # Attente initiale
             
+            # Attendre que le container apparaisse ou qu'il y ait des résultats
+            try:
+                page.wait_for_selector("#search-results-content", timeout=12000)
+            except:
+                log("⚠️ Premier container non trouvé, on attend plus longtemps...")
+                time.sleep(5)
+            
+            # Vérification debug
+            content_count = page.locator("#search-results-content").count()
+            log(f"🔍 {content_count} container(s) #search-results-content détectés")
+            
+            if content_count == 0:
+                log("❌ Aucun résultat visible")
+                continue
+                
         except Exception as e:
-            log(f"⚠️ Erreur recherche : {e}")
+            log(f"⚠️ Erreur pendant la recherche : {e}")
             continue
 
-        # === CAPTURE CORRIGÉE ===
+        # === CAPTURE + LISTE ===
         screenshot_path = f"search_results_{int(time.time())}.png"
         try:
-            # Sélection plus précise (le dernier ou dans le bon container)
-            results_container = page.locator("#search-results-content").last  # .last pour prendre le dernier
+            # Prendre le dernier container (le plus récent)
+            results_container = page.locator("#search-results-content").last
             
-            if results_container.count() > 0:
-                page.evaluate("""
-                    () => {
-                        document.querySelectorAll('header, nav, .topnav, .navbar').forEach(el => {
-                            if (el) el.style.display = 'none';
-                        });
-                    }
-                """)
-                results_container.screenshot(path=screenshot_path)
-                log(f"📸 Capture sauvegardée : {screenshot_path}")
-            else:
-                log("⚠️ Container résultats non trouvé")
+            page.evaluate("""
+                () => {
+                    document.querySelectorAll('header, nav, .topnav, .navbar, .search-header').forEach(el => {
+                        if (el) el.style.display = 'none';
+                    });
+                }
+            """)
+            
+            results_container.screenshot(path=screenshot_path)
+            log(f"📸 Capture sauvegardée : {screenshot_path}")
         except Exception as e:
             log(f"⚠️ Erreur capture : {e}")
             try:
@@ -89,13 +101,17 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
             except:
                 pass
 
-        # Liste des résultats
+        # Extraction des résultats
         items = page.evaluate("""
-            () => Array.from(document.querySelectorAll('#search-results-content:last-of-type .search-item, #search-results-content .search-item')).map((item, i) => ({
+            () => Array.from(document.querySelectorAll('#search-results-content .search-item, .search-item')).map((item, i) => ({
                 index: i + 1,
-                title: item.querySelector('.search-title')?.innerText.trim() || 'Sans titre'
+                title: item.querySelector('.search-title')?.innerText.trim() || item.innerText.trim().substring(0, 60)
             }))
         """)
+
+        if not items:
+            log("⚠️ Aucun item trouvé dans les résultats")
+            continue
 
         return {
             "status": "selection_needed",
@@ -104,6 +120,7 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
             "query": query
         }
 
+    log("🛑 Aucune recherche n'a donné de résultat.")
     return {"status": "no_results"}
 
 def recuperer_lien_vidzy(page):
