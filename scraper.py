@@ -78,12 +78,10 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
             log(f"⚠️ Erreur pendant la recherche : {e}")
             continue
 
-        # === CAPTURE + LISTE ===
+                # === CAPTURE LÉGÈRE POUR RENDER ===
         screenshot_path = f"search_results_{int(time.time())}.png"
         try:
-            # Prendre le dernier container (le plus récent)
             results_container = page.locator("#search-results-content").last
-            
             page.evaluate("""
                 () => {
                     document.querySelectorAll('header, nav, .topnav, .navbar, .search-header').forEach(el => {
@@ -92,13 +90,15 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
                 }
             """)
             
-            results_container.screenshot(path=screenshot_path)
+            # Capture avec timeout réduit + options légères
+            results_container.screenshot(path=screenshot_path, timeout=15000)
             log(f"📸 Capture sauvegardée : {screenshot_path}")
         except Exception as e:
             log(f"⚠️ Erreur capture : {e}")
             try:
-                page.screenshot(path=screenshot_path, full_page=False)
+                page.screenshot(path=screenshot_path, full_page=False, timeout=10000)
             except:
+                screenshot_path = None
                 pass
 
         # Extraction des résultats
