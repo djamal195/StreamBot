@@ -3,10 +3,11 @@ import json
 import os
 import requests
 import threading
+import re
+from datetime import datetime
 from scraper import run_scraper
 from tmdb_api import get_movie_info
 from pymongo import MongoClient
-from datetime import datetime
 
 app = Flask(__name__)
 
@@ -98,15 +99,14 @@ def process_background(user_id, title, year, is_series, season_num):
 
     if isinstance(result, dict) and result.get("status") == "selection_needed":
         screenshot = result.get("screenshot_path")
-        send_text(user_id, f"🔍 Plusieurs résultats trouvés pour '{title}'.")
+        send_text(user_id, f"🔍 Plusieurs résultats trouvés pour '{title}'. Je t'envoie l'image...")
         if screenshot and os.path.exists(screenshot):
-            # Envoi de l'image (à adapter selon ton domaine)
             image_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{screenshot}"
             fb_call("messages", {
                 "recipient": {"id": user_id},
                 "message": {"attachment": {"type": "image", "payload": {"url": image_url}}}
             })
-        send_text(user_id, "Réponds avec le numéro du bon résultat.")
+        send_text(user_id, "Réponds avec le numéro du bon résultat (ex: 2)")
         return
 
     if result:
@@ -128,11 +128,54 @@ def process_background(user_id, title, year, is_series, season_num):
     else:
         send_text(user_id, "❌ Contenu introuvable.")
 
-# Webhook et routes (à compléter selon ton besoin)
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
-    # ... ton code webhook actuel
-    pass
+    if request.method == 'GET':
+        if request.args.get("hub.verify_token") == VERIFY_TOKEN:
+            return request.args.get("hub.challenge")
+        return "Bad Token", 403
+
+    if request.method == 'POST':
+        data = request.json
+        if data and data.get("object") == "page":
+            for entry in data["entry"]:
+                for event in entry["messaging"]:
+                    uid = event["sender"]["id"]
+                    if "message" in event:
+                        handle_message(uid, event["message"]["text"])
+                    elif "postback" in event:
+                        handle_postback(uid, event["postback"]["payload"])
+        return "OK", 200
+
+def handle_message(user_id, text):
+    send_choice_card(user_id, text)
+
+def handle_postback(user_id, payload):
+    parts = payload.split('|')
+    action = parts[0]
+    
+    if action == "TYPE":
+        media_type = parts[1]
+        raw_text = parts[2]
+        if media_type == "FILM":
+            info = get_movie_info(raw_text)
+            if info: send_movie_card(user_id, info)
+            else: send_text(user_id, "❌ Film introuvable.")
+        elif media_type == "SERIE":
+            clean_title, season_num = extract_season_number(raw_text)
+            info = get_movie_info(clean_title)
+            if info:
+                info['is_series'] = True
+                send_movie_card(user_id, info, season_num=season_num)
+            else:
+                send_text(user_id, "❌ Série introuvable.")
+
+    elif action == "GENERATE":
+        title = parts[1]
+        year = parts[2]
+        is_series = (parts[3] == "1")
+        season_num = parts[4] if parts[4] != "0" else None
+        threading.Thread(target=process_background, args=(user_id, title, year, is_series, season_num)).start()
 
 @app.route('/watch/<slug>')
 def watch(slug):
