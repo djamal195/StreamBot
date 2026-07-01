@@ -32,7 +32,6 @@ def send_text(user_id, text):
     fb_call("messages", {"recipient": {"id": user_id}, "message": {"text": text}})
 
 def send_image(user_id, image_path):
-    """Envoie une image locale via URL publique"""
     if not image_path or not os.path.exists(image_path):
         send_text(user_id, "❌ Image non trouvée.")
         return
@@ -110,11 +109,12 @@ def process_background(user_id, title, year, is_series, season_num):
     else:
         result = run_scraper(title, is_serie=False)
 
+    # === GESTION DE LA SÉLECTION ===
     if isinstance(result, dict) and result.get("status") == "selection_needed":
         screenshot = result.get("screenshot_path")
         items = result.get("items", [])
         
-        # Sauvegarder l'état en attente
+        # Sauvegarde de l'état
         pending_selections.update_one(
             {"user_id": user_id},
             {"$set": {
@@ -128,16 +128,20 @@ def process_background(user_id, title, year, is_series, season_num):
         )
 
         send_text(user_id, f"🔍 Plusieurs résultats trouvés pour '{title}'.")
-        if screenshot:
-            send_image(user_id, screenshot)
-        
-        text = "Réponds avec le numéro du bon résultat :\n"
-        for item in items[:6]:
+
+        if screenshot and os.path.exists(screenshot):
+            send_image(user_id, screenshot)   # ← Envoi de l'image
+        else:
+            send_text(user_id, "⚠️ Image non disponible.")
+
+        # Liste des résultats
+        text = "Choisis le bon résultat en répondant avec son numéro :\n\n"
+        for item in items[:8]:
             text += f"{item['index']}. {item['title']}\n"
         send_text(user_id, text)
         return
 
-    # Si pas de sélection needed
+    # Si pas de sélection (cas direct)
     if result:
         info = get_movie_info(title)
         data = {
@@ -151,6 +155,7 @@ def process_background(user_id, title, year, is_series, season_num):
             "created_at": datetime.utcnow()
         }
         collection.insert_one(data)
+        
         url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/watch/{slug}"
         send_final_link(user_id, url)
     else:
