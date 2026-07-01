@@ -40,7 +40,6 @@ def login_user(page, username, password):
         return False
 
 def search_film(page, search_query, target_season, base_url, tmdb_poster_url=None):
-    """Retourne un dict pour le bot (avec screenshot + liste)"""
     if target_season:
         queries_to_try = [f"{search_query} Saison {target_season}", search_query]
     else:
@@ -57,16 +56,20 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
             search_input.fill(query)
             page.keyboard.press("Enter")
             
-            page.locator("#search-results-content").first.wait_for(state="attached", timeout=15000)
+            # Attente + sélection plus précise
+            page.wait_for_selector("#search-results-content", timeout=15000)
             time.sleep(3)
+            
         except Exception as e:
             log(f"⚠️ Erreur recherche : {e}")
             continue
 
-        # Capture propre
+        # === CAPTURE CORRIGÉE ===
         screenshot_path = f"search_results_{int(time.time())}.png"
         try:
-            results_container = page.locator("#search-results-content")
+            # Sélection plus précise (le dernier ou dans le bon container)
+            results_container = page.locator("#search-results-content").last  # .last pour prendre le dernier
+            
             if results_container.count() > 0:
                 page.evaluate("""
                     () => {
@@ -77,12 +80,18 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
                 """)
                 results_container.screenshot(path=screenshot_path)
                 log(f"📸 Capture sauvegardée : {screenshot_path}")
+            else:
+                log("⚠️ Container résultats non trouvé")
         except Exception as e:
             log(f"⚠️ Erreur capture : {e}")
+            try:
+                page.screenshot(path=screenshot_path, full_page=False)
+            except:
+                pass
 
         # Liste des résultats
         items = page.evaluate("""
-            () => Array.from(document.querySelectorAll('#search-results-content .search-item')).map((item, i) => ({
+            () => Array.from(document.querySelectorAll('#search-results-content:last-of-type .search-item, #search-results-content .search-item')).map((item, i) => ({
                 index: i + 1,
                 title: item.querySelector('.search-title')?.innerText.trim() || 'Sans titre'
             }))
