@@ -16,7 +16,7 @@ MONGO_URI = os.environ.get("MONGO_URI")
 client = MongoClient(MONGO_URI)
 db = client["streambot"]
 collection = db["contents"]
-pending_selections = db["pending_selections"]  # Nouvelle collection pour l'état
+pending_selections = db["pending_selections"]
 
 PAGE_ACCESS_TOKEN = "EAA1kj7YrrxIBQU1uaYs9ZCaWzljLrhwaZAyaaAFJdHbryb9uEZA9EuyGixG4oOvJqRTzoNZChKHB2aHZBwWRMZBQxXncPyJnT4AoLsdBn9w9BJ1N7ZBtXVOe60rua7Li3JPF2Ha0OPEyxXZCmnzBuufagdKONIoYmZCwv6tWlY3VZCfRZCPOpy4gNjXu9NRyeylY50OAXU7QYRJEQZDZD"
 VERIFY_TOKEN = "otf_secret_password"
@@ -109,12 +109,10 @@ def process_background(user_id, title, year, is_series, season_num):
     else:
         result = run_scraper(title, is_serie=False)
 
-    # === GESTION DE LA SÉLECTION ===
     if isinstance(result, dict) and result.get("status") == "selection_needed":
         screenshot = result.get("screenshot_path")
         items = result.get("items", [])
         
-        # Sauvegarde de l'état
         pending_selections.update_one(
             {"user_id": user_id},
             {"$set": {
@@ -128,20 +126,15 @@ def process_background(user_id, title, year, is_series, season_num):
         )
 
         send_text(user_id, f"🔍 Plusieurs résultats trouvés pour '{title}'.")
-
-        if screenshot and os.path.exists(screenshot):
-            send_image(user_id, screenshot)   # ← Envoi de l'image
-        else:
-            send_text(user_id, "⚠️ Image non disponible.")
-
-        # Liste des résultats
-        text = "Choisis le bon résultat en répondant avec son numéro :\n\n"
+        if screenshot:
+            send_image(user_id, screenshot)
+        
+        text = "Choisis le bon résultat :\n\n"
         for item in items[:8]:
             text += f"{item['index']}. {item['title']}\n"
         send_text(user_id, text)
         return
 
-    # Si pas de sélection (cas direct)
     if result:
         info = get_movie_info(title)
         data = {
@@ -155,13 +148,12 @@ def process_background(user_id, title, year, is_series, season_num):
             "created_at": datetime.utcnow()
         }
         collection.insert_one(data)
-        
         url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/watch/{slug}"
         send_final_link(user_id, url)
     else:
         send_text(user_id, "❌ Contenu introuvable.")
 
-# ====================== GESTION DES MESSAGES ======================
+# Webhook
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -183,35 +175,28 @@ def webhook():
 
 def handle_message(user_id, text):
     text = text.strip()
-    
-    # Vérifier si c'est une réponse à une sélection en cours
     pending = pending_selections.find_one({"user_id": user_id})
     if pending:
         try:
             choice = int(text)
             items = pending.get("items", [])
             selected = next((item for item in items if item["index"] == choice), None)
-            
             if selected:
-                send_text(user_id, f"✅ Tu as choisi : {selected['title']}")
-                # Ici on peut relancer le scraper avec le choix
-                # Pour l'instant on supprime l'état
+                send_text(user_id, f"✅ Choix : {selected['title']}")
                 pending_selections.delete_one({"user_id": user_id})
-                send_text(user_id, "🔄 Je continue l'extraction...")
-                # TODO: relancer avec le choix
+                send_text(user_id, "🔄 Extraction du lien...")
+                threading.Thread(target=process_background, args=(user_id, selected['title'], "2020", False, None)).start()
             else:
                 send_text(user_id, "❌ Numéro invalide.")
         except:
-            send_choice_card(user_id, text)  # Nouveau titre
+            send_choice_card(user_id, text)
         return
 
-    # Sinon, comportement normal
     send_choice_card(user_id, text)
 
 def handle_postback(user_id, payload):
     parts = payload.split('|')
     action = parts[0]
-    
     if action == "TYPE":
         media_type = parts[1]
         raw_text = parts[2]
@@ -227,7 +212,6 @@ def handle_postback(user_id, payload):
                 send_movie_card(user_id, info, season_num=season_num)
             else:
                 send_text(user_id, "❌ Série introuvable.")
-
     elif action == "GENERATE":
         title = parts[1]
         year = parts[2]
