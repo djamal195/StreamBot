@@ -1,10 +1,7 @@
 from playwright.sync_api import sync_playwright
 import time
-import re
-import unicodedata
 import os
 
-# CONFIGURATION
 HEADLESS_MODE = True
 
 def log(msg):
@@ -39,7 +36,7 @@ def login_user(page, username, password):
         log(f"⚠️ Erreur Login : {e}")
         return False
 
-def search_film(page, search_query, target_season, base_url, tmdb_poster_url=None):
+def search_film(page, search_query, target_season, base_url):
     if target_season:
         queries_to_try = [f"{search_query} Saison {target_season}", search_query]
     else:
@@ -56,62 +53,34 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
             search_input.fill(query)
             page.keyboard.press("Enter")
             
-            # Attente plus robuste
-            time.sleep(4)  # Attente initiale
-            
-            # Attendre que le container apparaisse ou qu'il y ait des résultats
-            try:
-                page.wait_for_selector("#search-results-content", timeout=12000)
-            except:
-                log("⚠️ Premier container non trouvé, on attend plus longtemps...")
-                time.sleep(5)
-            
-            # Vérification debug
-            content_count = page.locator("#search-results-content").count()
-            log(f"🔍 {content_count} container(s) #search-results-content détectés")
-            
-            if content_count == 0:
-                log("❌ Aucun résultat visible")
-                continue
-                
+            time.sleep(4)
+            page.wait_for_selector("#search-results-content", timeout=15000)
+            time.sleep(3)
         except Exception as e:
-            log(f"⚠️ Erreur pendant la recherche : {e}")
+            log(f"⚠️ Erreur recherche : {e}")
             continue
 
-                # === CAPTURE LÉGÈRE POUR RENDER ===
         screenshot_path = f"search_results_{int(time.time())}.png"
         try:
             results_container = page.locator("#search-results-content").last
             page.evaluate("""
                 () => {
-                    document.querySelectorAll('header, nav, .topnav, .navbar, .search-header').forEach(el => {
+                    document.querySelectorAll('header, nav, .topnav, .navbar').forEach(el => {
                         if (el) el.style.display = 'none';
                     });
                 }
             """)
-            
-            # Capture avec timeout réduit + options légères
-            results_container.screenshot(path=screenshot_path, timeout=15000)
+            results_container.screenshot(path=screenshot_path)
             log(f"📸 Capture sauvegardée : {screenshot_path}")
         except Exception as e:
             log(f"⚠️ Erreur capture : {e}")
-            try:
-                page.screenshot(path=screenshot_path, full_page=False, timeout=10000)
-            except:
-                screenshot_path = None
-                pass
 
-        # Extraction des résultats
         items = page.evaluate("""
-            () => Array.from(document.querySelectorAll('#search-results-content .search-item, .search-item')).map((item, i) => ({
+            () => Array.from(document.querySelectorAll('#search-results-content .search-item')).map((item, i) => ({
                 index: i + 1,
-                title: item.querySelector('.search-title')?.innerText.trim() || item.innerText.trim().substring(0, 60)
+                title: item.querySelector('.search-title')?.innerText.trim() || 'Sans titre'
             }))
         """)
-
-        if not items:
-            log("⚠️ Aucun item trouvé dans les résultats")
-            continue
 
         return {
             "status": "selection_needed",
@@ -120,14 +89,12 @@ def search_film(page, search_query, target_season, base_url, tmdb_poster_url=Non
             "query": query
         }
 
-    log("🛑 Aucune recherche n'a donné de résultat.")
     return {"status": "no_results"}
 
 def recuperer_lien_vidzy(page):
     try:
         page.wait_for_load_state("domcontentloaded", timeout=15000)
         time.sleep(2)
-        
         if "vidzy" in page.url:
             return page.evaluate("document.querySelector('.container.file-details a.main-button')?.href")
         
@@ -154,63 +121,6 @@ def recuperer_lien_vidzy(page):
 def extract_episodes_from_container(page, context, container_id, lang_name):
     log(f"📺 Analyse {lang_name} (#{container_id})...")
     links = []
-    
-    try:
-        for sel in [f"//a[contains(text(), '{lang_name}')]", f"//ul[contains(@class, 'nav-tabs')]//a[contains(text(), '{lang_name}')]"]:
-            tabs = page.locator(sel)
-            if tabs.count() > 0:
-                tabs.first.click()
-                time.sleep(2)
-                break
-    except:
-        pass
-
-    container = page.locator(f"#{container_id}")
-    try:
-        container.wait_for(state="attached", timeout=10000)
-    except:
-        log(f"   ⚠️ Container non trouvé.")
-
-    rows = container.locator(".episode-row").all()
-    log(f"📋 {len(rows)} épisodes trouvés.")
-
-    for i, row in enumerate(rows):
-        ep_num = i + 1
-        try:
-            download_btn = row.locator(".ep-download").first
-            if download_btn.count() == 0:
-                links.append({"episode": ep_num, "lien": None})
-                continue
-
-            row.scroll_into_view_if_needed()
-            time.sleep(1)
-            download_btn.evaluate("el => el.click()")
-            time.sleep(1.5)
-
-            intermediate_link = row.evaluate("""
-                () => {
-                    const a = document.querySelector('.ep-dl-panel-options a.ep-dl-primary, .ep-dl-panel-options a');
-                    return a ? a.href : null;
-                }
-            """)
-
-            if not intermediate_link:
-                links.append({"episode": ep_num, "lien": None})
-                continue
-
-            with context.expect_page(timeout=15000) as popup_info:
-                page.evaluate(f"window.open('{intermediate_link}', '_blank');")
-            
-            popup = popup_info.value
-            lien_final = recuperer_lien_vidzy(popup)
-            popup.close()
-
-            links.append({"episode": ep_num, "lien": lien_final})
-            time.sleep(1.5)
-        except Exception as e:
-            log(f"   ❌ Ep {ep_num} erreur : {e}")
-            links.append({"episode": ep_num, "lien": None})
-
     return links
 
 def run_scraper(titre_film, poster_url=None, season_number=None, is_serie=False, all_episodes=False):
@@ -228,32 +138,37 @@ def run_scraper(titre_film, poster_url=None, season_number=None, is_serie=False,
         try:
             page.goto(base_url, timeout=60000)
             time.sleep(5)
-
             login_user(page, "Jekle19", "c01h2bc3zp5")
             
-            search_result = search_film(page, titre_film, season_number, base_url, tmdb_poster_url=poster_url)
+            search_result = search_film(page, titre_film, season_number, base_url)
             
-            if search_result.get("status") == "selection_needed":
+            if isinstance(search_result, dict) and search_result.get("status") == "selection_needed":
                 browser.close()
-                return search_result  # Retourne dict pour le bot
+                return search_result
 
-            if not search_result or search_result.get("status") == "no_results":
+            if not search_result:
                 browser.close()
                 return None
 
-            # Si on a un lien direct (ancien comportement)
             film_url = search_result
             page.goto(film_url, timeout=60000)
             page.wait_for_load_state("domcontentloaded")
             time.sleep(3)
 
+            result = None
             if is_serie:
-                vf_links = extract_episodes_from_container(page, context, "vf-episodes", "VF")
-                vostfr_links = extract_episodes_from_container(page, context, "vostfr-episodes", "VOSTFR")
-                result = {"vf": vf_links, "vostfr": vostfr_links}
+                result = {"vf": [], "vostfr": []}
             else:
-                # Logique film...
-                result = None  # À compléter si besoin
+                try:
+                    page.click("#downloadBtn")
+                    page.wait_for_selector("#downloadOptions", timeout=10000)
+                    with page.expect_popup(timeout=10000) as popup_info:
+                        page.locator("#downloadOptions div").first.click()
+                    popup = popup_info.value
+                    result = recuperer_lien_vidzy(popup)
+                    popup.close()
+                except Exception as e:
+                    log(f"Erreur film : {e}")
 
             browser.close()
             return result
