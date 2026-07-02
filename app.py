@@ -11,7 +11,6 @@ from pymongo import MongoClient
 
 app = Flask(__name__)
 
-# MongoDB
 MONGO_URI = os.environ.get("MONGO_URI")
 client = MongoClient(MONGO_URI)
 db = client["streambot"]
@@ -129,7 +128,7 @@ def process_background(user_id, title, year, is_series, season_num):
         if screenshot:
             send_image(user_id, screenshot)
         
-        text = "Choisis le bon résultat :\n\n"
+        text = "Réponds avec le numéro du bon résultat :\n\n"
         for item in items[:8]:
             text += f"{item['index']}. {item['title']}\n"
         send_text(user_id, text)
@@ -153,7 +152,6 @@ def process_background(user_id, title, year, is_series, season_num):
     else:
         send_text(user_id, "❌ Contenu introuvable.")
 
-# Webhook
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -184,14 +182,13 @@ def handle_message(user_id, text):
             if selected:
                 send_text(user_id, f"✅ Choix : {selected['title']}")
                 pending_selections.delete_one({"user_id": user_id})
-                send_text(user_id, "🔄 Extraction du lien...")
+                send_text(user_id, "🔄 Extraction en cours...")
                 threading.Thread(target=process_background, args=(user_id, selected['title'], "2020", False, None)).start()
             else:
                 send_text(user_id, "❌ Numéro invalide.")
         except:
             send_choice_card(user_id, text)
         return
-
     send_choice_card(user_id, text)
 
 def handle_postback(user_id, payload):
